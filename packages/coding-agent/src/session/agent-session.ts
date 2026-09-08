@@ -258,6 +258,7 @@ import type {
 	SessionStats,
 	UsageFallbackConfirmer,
 } from "./agent-session-types";
+import { unavailableProviderAuthMessage } from "./unavailable-provider-auth";
 import { writeArtifact } from "./artifacts";
 import {
 	ASYNC_INLINE_RESULT_MAX_CHARS,
@@ -6365,8 +6366,11 @@ export class AgentSession {
 			const apiKey = await this.#modelRegistry.getApiKey(this.model, this.sessionId);
 			if (!apiKey) {
 				throw new Error(
-					`No API key found for ${this.model.provider}.\n\n` +
-						`Use /login, set an API key environment variable, or create ${getAgentDbPath()}`,
+					unavailableProviderAuthMessage(
+						this.#modelRegistry.authStorage,
+						this.model.provider,
+						getAgentDbPath(),
+					),
 				);
 			}
 

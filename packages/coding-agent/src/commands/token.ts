@@ -13,6 +13,7 @@ import { isManagedMCPOAuthCredentialId, mcpOAuthCredentialProfile } from "../mcp
 import { discoverAuthStorage } from "../sdk";
 import type { AuthStorage } from "../session/auth-storage";
 import { getAvailableAuthMethods } from "../web/search/providers/perplexity-auth";
+import { inspectUnavailableProviderAuth } from "../session/unavailable-provider-auth";
 
 async function resolveManagedMcpOAuthToken(
 	authStorage: AuthStorage,
@@ -199,10 +200,26 @@ export default class Token extends Command {
 					}
 				}
 
-				const msg = `No active credential found for provider "${providerName}".`;
-				process.stderr.write(`${chalk.red(msg)}\n`);
-				if (activeProviders.size > 0) {
-					process.stderr.write(`Configured providers: ${Array.from(activeProviders).sort().join(", ")}\n`);
+				const unavailable = inspectUnavailableProviderAuth(authStorage, provider);
+				if (unavailable.kind === "blocked") {
+					const remainingMin = Math.max(1, Math.ceil(Math.max(0, unavailable.retryAtMs - Date.now()) / 60_000));
+					const acct = unavailable.emails.length > 0 ? ` (${unavailable.emails.join(", ")})` : "";
+					process.stderr.write(
+						`${chalk.yellow(`Provider "${providerName}" has stored OAuth${acct} but is rate-limited until ${new Date(unavailable.retryAtMs).toISOString()} (~${remainingMin}m).`)}\n`,
+					);
+					process.stderr.write("Do not /login — retry after the cooldown expires or switch models.\n");
+				} else if (unavailable.kind === "stored-unusable") {
+					const acct = unavailable.emails.length > 0 ? ` (${unavailable.emails.join(", ")})` : "";
+					process.stderr.write(
+						`${chalk.yellow(`Provider "${providerName}" has stored OAuth${acct} but no token could be refreshed.`)}\n`,
+					);
+					process.stderr.write("Do not /login unless your account was revoked or `omp token <provider> --list` is empty.\n");
+				} else {
+					const msg = `No active credential found for provider "${providerName}".`;
+					process.stderr.write(`${chalk.red(msg)}\n`);
+					if (activeProviders.size > 0) {
+						process.stderr.write(`Configured providers: ${Array.from(activeProviders).sort().join(", ")}\n`);
+					}
 				}
 				process.exitCode = 1;
 				return;
