@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Live task dispatch now reloads added, changed, removed, and deleted project task and retry settings before resolving subagents ([#11191](https://github.com/can1357/oh-my-pi/issues/11191)).
+
 ## [18.1.14] - 2026-09-07
 
 ### Fixed
