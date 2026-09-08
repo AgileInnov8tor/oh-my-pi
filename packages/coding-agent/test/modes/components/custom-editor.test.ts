@@ -603,3 +603,31 @@ describe("CustomEditor space-hold push-to-talk", () => {
 		expect(events).toEqual([]);
 	});
 });
+
+describe("CustomEditor custom chip glyphs (issue #11029 review)", () => {
+	beforeAll(async () => {
+		await initTheme();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("detects a chip whose glyph the active theme overrides", () => {
+		const originalSymbol = theme.symbol.bind(theme);
+		vi.spyOn(theme, "symbol").mockImplementation(key => (key === "chip.image" ? "❖" : originalSymbol(key)));
+
+		const editor = new CustomEditor(getEditorTheme());
+		editor.pendingImages = Array.from({ length: 11 }, () => ({
+			type: "image" as const,
+			data: "aW1hZ2U=",
+			mimeType: "image/png",
+		}));
+		// The composer inserts the overridden glyph; scanning must still resolve the chip — and only
+		// #11, not the #1 prefix.
+		editor.setText(chipLabel("image", 11));
+
+		expect(chipLabel("image", 11).startsWith("❖")).toBe(true);
+		expect(editor.composerChips().map(c => c.n)).toEqual([11]);
+	});
+});

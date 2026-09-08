@@ -17,9 +17,9 @@ import type { AppKeybinding } from "../../config/keybindings";
 import { isVideoPath, videoPreviewSource } from "../../utils/video";
 import {
 	attachmentSgr,
-	COMPOSER_TOKEN_REGEX,
 	chipLabel,
 	collapseImageMarkers,
+	composerTokenRegex,
 	referencedAttachments,
 	renderPlaceholders,
 } from "../composer-attachments";
@@ -559,8 +559,9 @@ export class CustomEditor extends Editor {
 	}
 
 	/** Treat image/paste references — compact chip tokens and bracketed markers alike — as
-	 *  indivisible: a stray backspace deletes the whole token instead of corrupting it. */
-	override atomicTokenPattern = COMPOSER_TOKEN_REGEX;
+	 *  indivisible: a stray backspace deletes the whole token instead of corrupting it. Refreshed
+	 *  in {@link decorateText} so a theme switch that changes the chip glyphs stays effective. */
+	override atomicTokenPattern = composerTokenRegex();
 
 	/** Magic-keyword shimmer cadence — drives one editor repaint every 70 ms while
 	 *  a keyword is on screen and the prompt is focused. ~14 frames/s is smooth
@@ -587,6 +588,8 @@ export class CustomEditor extends Editor {
 	 *  item markers use the accent color so separate follow-ups remain visible while composing. */
 	override decorateText = (text: string, context: EditorTextDecorationContext): string => {
 		const editorText = this.getText();
+		// Keep atomic-token deletion aligned with the active theme's chip glyphs.
+		this.atomicTokenPattern = composerTokenRegex();
 		const animated = this.focused && this.#shimmerEnabled() && hasMagicKeyword(editorText);
 		const phase = animated ? (Date.now() % CustomEditor.SHIMMER_PERIOD_MS) / CustomEditor.SHIMMER_PERIOD_MS : 0;
 		if (animated) this.#scheduleShimmerFrame();
