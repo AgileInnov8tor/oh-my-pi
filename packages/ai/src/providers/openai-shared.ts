@@ -95,7 +95,7 @@ import {
 	resolveGitHubCopilotBaseUrl,
 } from "./github-copilot-headers";
 import type { ChatCompletionCreateParamsStreaming } from "./openai-chat-wire";
-import type { InputItem } from "./openai-codex/request-transformer";
+import { type InputItem, sanitizeCodexCallId } from "./openai-codex/request-transformer";
 import type {
 	Response as OpenAIResponse,
 	ResponseComputerToolCall,

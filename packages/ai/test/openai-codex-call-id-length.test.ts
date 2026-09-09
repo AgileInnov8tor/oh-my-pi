@@ -1,14 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import {
-	type InputItem,
 	type RequestBody,
 	sanitizeCodexCallId,
 	transformRequestBody,
 } from "@oh-my-pi/pi-ai/providers/openai-codex/request-transformer";
-import {
-	buildTransformedCodexRequestBody,
-	convertCodexResponsesMessages,
-} from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
+import { buildTransformedCodexRequestBody } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
+import { normalizeResponsesToolCallIdForTransform } from "@oh-my-pi/pi-ai/providers/openai-shared";
 import type { Context } from "@oh-my-pi/pi-ai/types";
 import { createCodexModel } from "./helpers";
 
@@ -173,12 +170,27 @@ describe("OpenAI Codex call_id sanitization and 64-char limit", () => {
 							arguments: { command: "ls" },
 						},
 					],
+					api: "openai-codex-responses",
+					provider: "openai-codex",
+					model: "gpt-5.5",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: Date.now(),
 				},
 				{
 					role: "toolResult",
 					toolCallId: longId,
 					toolName: "bash",
 					content: [{ type: "text", text: "file.txt" }],
+					isError: false,
+					timestamp: Date.now(),
 				},
 			],
 		};
@@ -202,5 +214,25 @@ describe("OpenAI Codex call_id sanitization and 64-char limit", () => {
 		expect(outputItem).toBeDefined();
 		expect(callItem!.call_id).toBe(outputItem!.call_id);
 		expect(callItem!.call_id!.length).toBeLessThanOrEqual(64);
+	});
+
+	it("normalizeResponsesToolCallIdForTransform normalizes composite and long IDs without error", () => {
+		const composite = "call_12345|fc_67890";
+		const normalized = normalizeResponsesToolCallIdForTransform(composite);
+		expect(normalized).not.toBe(composite);
+		const [compCall, compItem] = normalized.split("|");
+		expect(compCall).toBe("call_12345");
+		expect(compItem).not.toBe("fc_67890");
+		expect(compItem.startsWith("fc_")).toBe(true);
+		expect(compItem.length).toBeLessThanOrEqual(64);
+
+		const longId = "call_" + "x".repeat(80);
+		const normalizedLong = normalizeResponsesToolCallIdForTransform(longId);
+		expect(normalizedLong).not.toBe(longId);
+		const [longCall, longItem] = normalizedLong.split("|");
+		expect(longCall.length).toBeLessThanOrEqual(64);
+		expect(/^[a-zA-Z0-9_-]+$/.test(longCall)).toBe(true);
+		expect(longItem.startsWith("fc_")).toBe(true);
+		expect(longItem.length).toBeLessThanOrEqual(64);
 	});
 });

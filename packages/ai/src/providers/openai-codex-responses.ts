@@ -79,7 +79,6 @@ import {
 	type RequestBody,
 	resolveCodexResponsesLite,
 	sanitizeCodexCallId,
-	sanitizeInputCallIds,
 	transformRequestBody,
 } from "./openai-codex/request-transformer";
 import { CodexApiError } from "./openai-codex/response-handler";
