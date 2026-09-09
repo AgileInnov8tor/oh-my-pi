@@ -237,6 +237,30 @@ function toolOutputKind(type: unknown): ToolCallKind | undefined {
  *   tool-result child is dropped from the reconstructed history) or when a turn
  *   is aborted/crashes after the call streamed but before its result persisted.
  */
+/**
+ * Sanitize an OpenAI Responses/Codex tool call ID to <= 64 characters and valid charset.
+ * Composite IDs with '|' or '\n' have their secondary/item part stripped.
+ * Long IDs are deterministically truncated with a hash suffix to prevent collisions.
+ */
+export function sanitizeCodexCallId(rawCallId: string): string {
+	if (!rawCallId) return rawCallId;
+	const sep = rawCallId.search(/[\n|]/);
+	const base = sep >= 0 ? rawCallId.slice(0, sep) : rawCallId;
+	const sanitized = base.replace(/[^a-zA-Z0-9_-]/g, "_");
+	if (sanitized.length <= 64) return sanitized;
+	const hash = Bun.hash(rawCallId).toString(36);
+	const prefixLen = Math.max(0, 63 - hash.length);
+	return `${sanitized.slice(0, prefixLen)}_${hash}`.slice(0, 64);
+}
+
+export function sanitizeInputCallIds(input: InputItem[]): void {
+	for (const item of input) {
+		if (typeof item.call_id === "string") {
+			item.call_id = sanitizeCodexCallId(item.call_id);
+		}
+	}
+}
+
 function repairToolCallPairs(input: InputItem[]): InputItem[] {
 	const callKinds = new Map<string, ToolCallKind>();
 	const outputKinds = new Map<string, ToolCallKind>();
@@ -332,6 +356,7 @@ export interface CodexLiteShapedBody {
 export function applyCodexResponsesLiteShape(body: CodexLiteShapedBody): void {
 	const input = Array.isArray(body.input) ? body.input : [];
 	stripImageDetails(input);
+	sanitizeInputCallIds(input as InputItem[]);
 	body.parallel_tool_calls = false;
 	const declaredTools = Array.isArray(body.tools) ? body.tools : [];
 	let additionalTools = declaredTools;
@@ -383,6 +408,7 @@ export async function transformRequestBody(
 		body.input = filterInput(body.input);
 		if (body.input) {
 			body.input = repairToolCallPairs(body.input);
+			sanitizeInputCallIds(body.input);
 		}
 	}
 
