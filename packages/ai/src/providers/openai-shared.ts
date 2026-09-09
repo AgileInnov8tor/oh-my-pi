@@ -79,7 +79,6 @@ import {
 	kStreamingLastParseLen,
 	kStreamingPartialJson,
 } from "../utils/block-symbols";
-import { sanitizeCodexCallId } from "./openai-codex/request-transformer";
 import { hasVisibleAssistantContent } from "../utils/empty-completion-retry";
 import type { AssistantMessageEventStream } from "../utils/event-stream";
 import {
@@ -3891,18 +3890,7 @@ export function buildResponsesDeltaInput<TItem extends ResponseInputItem | Input
 				type === "message" || type === "function_call" || type === "custom_tool_call"
 					? REPLAY_SANITIZED_ITEM_EXCLUDE_MAP
 					: ITEM_LIFECYCLE_EXCLUDE_MAP;
-			const currentItem = current.input[index];
-			const prevCallId = typeof item === "object" && item && "call_id" in item ? String(item.call_id) : undefined;
-			const currCallId =
-				typeof currentItem === "object" && currentItem && "call_id" in currentItem
-					? String(currentItem.call_id)
-					: undefined;
-			const callIdMatches =
-				prevCallId === undefined ||
-				currCallId === undefined ||
-				prevCallId === currCallId ||
-				sanitizeCodexCallId(prevCallId) === sanitizeCodexCallId(currCallId);
-			if (callIdMatches && deepEqualsWithout(item, currentItem, { ...omitKeys, call_id: true })) {
+			if (deepEqualsWithout(item, current.input[index], omitKeys)) {
 				index++;
 			} else {
 				return null;
