@@ -46,7 +46,7 @@ export function normalizeResponsesToolCallId(
 	itemPrefix: ResponsesToolItemIdPrefix = "fc",
 ): { callId: string; itemId: string } {
 	const sep = id.search(/[\n|]/);
-	if (sep >= 0) {
+	if (sep > 0) {
 		const callId = id.slice(0, sep);
 		const itemId = id.slice(sep + 1);
 		return { callId, itemId: normalizeResponsesItemId(itemId, itemPrefix) };

@@ -1978,20 +1978,18 @@ function createOutputBlockForItem(item: CodexEventItem): CodexOutputBlock | null
 		return { type: "text", text: "", textSignature: encodeTextSignatureV1(item.id, phase) };
 	}
 	if (item.type === "function_call") {
-		const callId = sanitizeCodexCallId(item.call_id);
 		return {
 			type: "toolCall",
-			id: encodeResponsesToolCallId(callId, item.id),
+			id: encodeResponsesToolCallId(item.call_id, item.id),
 			name: item.name,
 			arguments: {},
 			[kStreamingPartialJson]: item.arguments || "",
 		};
 	}
 	if (item.type === "computer_call") {
-		const callId = sanitizeCodexCallId(item.call_id);
 		return {
 			type: "toolCall",
-			id: encodeResponsesToolCallId(callId, item.id),
+			id: encodeResponsesToolCallId(item.call_id, item.id),
 			name: "computer",
 			arguments: {},
 			providerMetadata: computerCallMetadata(item),
@@ -1999,13 +1997,12 @@ function createOutputBlockForItem(item: CodexEventItem): CodexOutputBlock | null
 		};
 	}
 	if (item.type === "custom_tool_call") {
-		const callId = sanitizeCodexCallId(item.call_id);
 		// Wire name flows through unchanged; the agent-loop dispatcher also
 		// matches `Tool.customWireName`. Reuse `partialJson` as the
 		// accumulation buffer for the raw input string.
 		return {
 			type: "toolCall",
-			id: encodeResponsesToolCallId(callId, item.id),
+			id: encodeResponsesToolCallId(item.call_id, item.id),
 			name: item.name,
 			arguments: { input: item.input ?? "" },
 			customWireName: item.name,
@@ -2395,9 +2392,6 @@ class CodexStreamProcessor {
 		if (!rawItem || typeof rawItem !== "object") return;
 		const item = structuredCloneJSON(rawItem) as CodexEventItem;
 		if (item.type === "image_generation_call" && item.result) item.status = "completed";
-		if ("call_id" in item && typeof item.call_id === "string") {
-			item.call_id = sanitizeCodexCallId(item.call_id);
-		}
 		runtime.nativeOutputItems.push(item as unknown as Record<string, unknown>);
 
 		// Match the finalization to the OPEN ITEM that started this block, not the
@@ -2544,7 +2538,6 @@ class CodexStreamProcessor {
 					structuredCloneJSON(runtime.nativeOutputItems),
 				);
 				if (responseId && replayableResponseItems) {
-					sanitizeInputCallIds(replayableResponseItems as InputItem[]);
 					state.lastResponseId = responseId;
 					state.lastResponseItems = replayableResponseItems;
 					state.canAppend = rawEvent.type === "response.done" || rawEvent.type === "response.completed";
@@ -2980,9 +2973,7 @@ class CodexStreamProcessor {
 			throw new CodexProviderStreamError("Codex response failed", false);
 		}
 
-		const nativeItems = structuredCloneJSON(this.runtime.nativeOutputItems);
-		sanitizeInputCallIds(nativeItems as InputItem[]);
-		output.providerPayload = createOpenAIResponsesHistoryPayload(this.model.provider, nativeItems);
+		output.providerPayload = createOpenAIResponsesHistoryPayload(this.model.provider, this.runtime.nativeOutputItems);
 		output.duration = performance.now() - this.startTime;
 		if (completion.firstTokenTime) {
 			output.ttft = completion.firstTokenTime - this.startTime;
@@ -4544,19 +4535,13 @@ function convertMessages(model: Model<"openai-codex-responses">, context: Contex
 
 	const normalizeToolCallId = (id: string): string => {
 		const sep = id.search(/[\n|]/);
-		if (sep < 0 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id)) return id;
-		const [callId, itemId] = sep >= 0 ? [id.slice(0, sep), id.slice(sep + 1)] : [id, undefined];
-		const sanitizedCallId = callId.replace(/[^a-zA-Z0-9_-]/g, "_");
+		const [callId, itemId] = sep > 0 ? [id.slice(0, sep), id.slice(sep + 1)] : [id, undefined];
+		const normalizedCallId = sanitizeCodexCallId(callId);
 		let sanitizedItemId = (itemId ?? Bun.hash(id).toString(36)).replace(/[^a-zA-Z0-9_-]/g, "_");
 		if (!sanitizedItemId.startsWith("fc")) {
 			sanitizedItemId = `fc_${sanitizedItemId}`;
 		}
-		let normalizedCallId =
-			sanitizedCallId.length > 64
-				? `${sanitizedCallId.slice(0, Math.max(0, 63 - Bun.hash(callId).toString(36).length))}_${Bun.hash(callId).toString(36)}`.slice(0, 64)
-				: sanitizedCallId;
 		let normalizedItemId = sanitizedItemId.length > 64 ? sanitizedItemId.slice(0, 64) : sanitizedItemId;
-		normalizedCallId = normalizedCallId.replace(/_+$/, "");
 		normalizedItemId = normalizedItemId.replace(/_+$/, "");
 		return `${normalizedCallId}|${normalizedItemId}`;
 	};

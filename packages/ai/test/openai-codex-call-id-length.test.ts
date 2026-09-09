@@ -42,6 +42,39 @@ describe("OpenAI Codex call_id sanitization and 64-char limit", () => {
 		expect(sanitizedNewline.length).toBeLessThanOrEqual(64);
 	});
 
+	it("hashes canonical base so different composite item halves produce identical call_id", () => {
+		const longBase = "call_" + "b".repeat(70);
+		const compositeA = `${longBase}|fc_itemA`;
+		const compositeB = `${longBase}|fc_itemB`;
+
+		const sanitizedA = sanitizeCodexCallId(compositeA);
+		const sanitizedB = sanitizeCodexCallId(compositeB);
+
+		expect(sanitizedA).toBe(sanitizedB);
+		expect(sanitizedA.length).toBeLessThanOrEqual(64);
+	});
+
+	it("disambiguates distinct short IDs with disallowed characters to prevent collisions", () => {
+		const idColon = "call:a";
+		const idSlash = "call/a";
+
+		const sanitizedColon = sanitizeCodexCallId(idColon);
+		const sanitizedSlash = sanitizeCodexCallId(idSlash);
+
+		expect(sanitizedColon).not.toBe(sanitizedSlash);
+		expect(sanitizedColon.length).toBeLessThanOrEqual(64);
+		expect(sanitizedSlash.length).toBeLessThanOrEqual(64);
+	});
+
+	it("handles degenerate IDs with leading delimiters and non-empty fallback", () => {
+		expect(sanitizeCodexCallId("|fc_123").length).toBeGreaterThan(0);
+		expect(sanitizeCodexCallId("\nfc_123").length).toBeGreaterThan(0);
+		expect(sanitizeCodexCallId("...").length).toBeGreaterThan(0);
+		expect(sanitizeCodexCallId("").length).toBeGreaterThan(0);
+		expect(/^[a-zA-Z0-9_-]+$/.test(sanitizeCodexCallId("|fc_123"))).toBe(true);
+		expect(/^[a-zA-Z0-9_-]+$/.test(sanitizeCodexCallId("..."))).toBe(true);
+	});
+
 	it("sanitizes all call_ids in request body input and preserves pairing", async () => {
 		const longCallId = "call_" + "x".repeat(75); // 80 chars
 		const newlineCallId = "call-3beb4b63-da41-43be-9d9e-ab6de73d451a-1532\nfc_7f6f19ef-e181-98a1-a109-b0be3568bf60_0";
@@ -91,6 +124,38 @@ describe("OpenAI Codex call_id sanitization and 64-char limit", () => {
 		// Verify paired call_ids match exactly between calls and outputs
 		expect(input[0].call_id).toBe(input[1].call_id);
 		expect(input[2].call_id).toBe(input[3].call_id);
+	});
+
+	it("pairs mixed foreign history and result when one is composite and one is plain", async () => {
+		const baseCallId = "call_" + "m".repeat(70);
+		const compositeResultId = `${baseCallId}|fc_result_1`;
+
+		const body: RequestBody = {
+			model: "gpt-6-astra",
+			input: [
+				{
+					type: "function_call",
+					call_id: baseCallId,
+					name: "read",
+					arguments: "{}",
+				},
+				{
+					type: "function_call_output",
+					call_id: compositeResultId,
+					output: "content",
+				},
+			],
+		};
+
+		const model = createCodexModel("gpt-5.5");
+		const transformed = await transformRequestBody(body, model);
+
+		expect(transformed.input).toBeDefined();
+		const input = transformed.input!;
+		expect(input).toHaveLength(2);
+		expect(input[0].type).toBe("function_call");
+		expect(input[1].type).toBe("function_call_output");
+		expect(input[0].call_id).toBe(input[1].call_id);
 	});
 
 	it("end-to-end: converts session context with 80-char call_ids without exceeding 64 chars", async () => {

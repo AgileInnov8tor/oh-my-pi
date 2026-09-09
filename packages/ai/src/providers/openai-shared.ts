@@ -79,6 +79,7 @@ import {
 	kStreamingLastParseLen,
 	kStreamingPartialJson,
 } from "../utils/block-symbols";
+import { sanitizeCodexCallId } from "./openai-codex/request-transformer";
 import { hasVisibleAssistantContent } from "../utils/empty-completion-retry";
 import type { AssistantMessageEventStream } from "../utils/event-stream";
 import {
@@ -1403,15 +1404,8 @@ export function normalizeResponsesToolCallIdForTransform(
 	const isForeignToolCall =
 		source != null && model != null && (source.provider !== model.provider || source.api !== model.api);
 	if (isForeignToolCall || sep >= 0 || id.length > 64) {
-		const [callId, itemId] = sep >= 0 ? [id.slice(0, sep), id.slice(sep + 1)] : [id, undefined];
-		const normalizeIdPart = (part: string): string => {
-			const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
-			if (sanitized.length <= 64) return sanitized.replace(/_+$/, "");
-			const hash = Bun.hash(part).toString(36);
-			const prefixLen = Math.max(0, 63 - hash.length);
-			return `${sanitized.slice(0, prefixLen)}_${hash}`.slice(0, 64).replace(/_+$/, "");
-		};
-		const normalizedCallId = normalizeIdPart(callId);
+		const [callId, itemId] = sep > 0 ? [id.slice(0, sep), id.slice(sep + 1)] : [id, undefined];
+		const normalizedCallId = sanitizeCodexCallId(callId);
 		let normalizedItemId = itemId ? `fc_${Bun.hash(itemId).toString(36)}` : `fc_${Bun.hash(id).toString(36)}`;
 		if (normalizedItemId.length > 64) normalizedItemId = normalizedItemId.slice(0, 64);
 		return `${normalizedCallId}|${normalizedItemId}`;
@@ -3897,7 +3891,18 @@ export function buildResponsesDeltaInput<TItem extends ResponseInputItem | Input
 				type === "message" || type === "function_call" || type === "custom_tool_call"
 					? REPLAY_SANITIZED_ITEM_EXCLUDE_MAP
 					: ITEM_LIFECYCLE_EXCLUDE_MAP;
-			if (deepEqualsWithout(item, current.input[index], omitKeys)) {
+			const currentItem = current.input[index];
+			const prevCallId = typeof item === "object" && item && "call_id" in item ? String(item.call_id) : undefined;
+			const currCallId =
+				typeof currentItem === "object" && currentItem && "call_id" in currentItem
+					? String(currentItem.call_id)
+					: undefined;
+			const callIdMatches =
+				prevCallId === undefined ||
+				currCallId === undefined ||
+				prevCallId === currCallId ||
+				sanitizeCodexCallId(prevCallId) === sanitizeCodexCallId(currCallId);
+			if (callIdMatches && deepEqualsWithout(item, currentItem, { ...omitKeys, call_id: true })) {
 				index++;
 			} else {
 				return null;
