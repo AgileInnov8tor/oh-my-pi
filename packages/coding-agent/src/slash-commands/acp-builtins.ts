@@ -1,7 +1,8 @@
 import type { AvailableCommand } from "@oh-my-pi/pi-utils/acp";
 import { BUILTIN_SLASH_COMMANDS_INTERNAL, lookupBuiltinSlashCommand } from "./builtin-registry";
 import { parseSlashCommand } from "./helpers/parse";
-import type { AcpBuiltinSlashCommandResult, SlashCommandRuntime } from "./types";
+import type { AcpBuiltinSlashCommandResult, SlashCommandResult, SlashCommandRuntime } from "./types";
+import { applyGuardResumeHandoff } from "../session/kontinuo-resume";
 
 export type { AcpBuiltinSlashCommandResult } from "./types";
 
@@ -64,7 +65,73 @@ export async function executeAcpBuiltinSlashCommand(
 	if (!parsed) return false;
 	const command = lookupBuiltinSlashCommand(parsed.name);
 	if (!command?.handle) return false;
-	const result = await command.handle(parsed, runtime);
-	if (result === undefined) return { consumed: true };
-	return result;
+	const request = { name: command.name, text, args: parsed.args };
+	const handleInline = async (inlineRuntime: SlashCommandRuntime): Promise<SlashCommandResult> =>
+		(await command.handle!(parsed, inlineRuntime)) ?? undefined;
+	const session = runtime.session as {
+		runBuiltinCommand?: (
+			request: { name: string; text: string; args: string },
+			execute: (handoff?: { resumeText?: string }) => Promise<SlashCommandResult>,
+			options?: { preAdmitted?: boolean },
+		) => Promise<
+			{ status: "executed"; value: SlashCommandResult; resumeText?: string } | { status: "blocked"; reason: string }
+		>;
+		admitBuiltinCommand?: (
+			request: { name: string; text: string; args: string },
+		) => { ok: true } | { ok: false; reason: string };
+	};
+
+	if (typeof session.runBuiltinCommand !== "function") {
+		const result = await command.handle(parsed, runtime);
+		if (result === undefined) return { consumed: true };
+		return result;
+	}
+
+	if (runtime.runCommandInBackground) {
+		if (typeof session.admitBuiltinCommand !== "function") {
+			await runtime.output("Checkpoint blocked: builtin command guard admission is not available.");
+			return { consumed: true };
+		}
+		const admitted = session.admitBuiltinCommand(request);
+		if (!admitted.ok) {
+			await runtime.output(admitted.reason);
+			return { consumed: true };
+		}
+		const { runCommandInBackground: _ignored, ...inlineRuntime } = runtime;
+		runtime.runCommandInBackground(async () => {
+			const gated = await session.runBuiltinCommand!(
+				request,
+				handoff => {
+					applyGuardResumeHandoff({
+						commandName: command.name,
+						resumeText: handoff?.resumeText,
+						session: inlineRuntime.session,
+					});
+					return handleInline(inlineRuntime);
+				},
+				{
+					preAdmitted: true,
+				},
+			);
+			if (gated.status === "blocked") {
+				await runtime.output(gated.reason);
+			}
+		});
+		return { consumed: true };
+	}
+
+	const gated = await session.runBuiltinCommand(request, handoff => {
+		applyGuardResumeHandoff({
+			commandName: command.name,
+			resumeText: handoff?.resumeText,
+			session: runtime.session,
+		});
+		return handleInline(runtime);
+	});
+	if (gated.status === "blocked") {
+		await runtime.output(gated.reason);
+		return { consumed: true };
+	}
+	if (gated.value === undefined) return { consumed: true };
+	return gated.value;
 }

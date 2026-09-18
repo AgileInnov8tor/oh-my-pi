@@ -513,6 +513,7 @@ describe("createAgentSession credential_disabled subscription", () => {
 				commands: new Map(),
 				flags: new Map(),
 				shortcuts: new Map(),
+				builtinCommandGuards: new Map(),
 			};
 			const runtime = new ExtensionRuntime();
 			const sessionManager = SessionManager.inMemory();

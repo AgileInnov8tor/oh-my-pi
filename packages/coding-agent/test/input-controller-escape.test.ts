@@ -889,3 +889,72 @@ describe("InputController double-tap ← gesture", () => {
 		expect(showAgentHub).not.toHaveBeenCalled();
 	});
 });
+
+describe("InputController checkpoint preparation cancellation", () => {
+	function armPreparation(
+		ctx: InteractiveModeContext,
+		name: string,
+	): Mock<() => boolean> {
+		const cancel = vi.fn(() => true);
+		Object.assign(ctx.session, {
+			isBuiltinCommandPreparing: true,
+			builtinCommandPreparationName: name,
+			cancelBuiltinCommandPreparation: cancel,
+		});
+		return cancel;
+	}
+
+	it("cancels checkpoint prep on Esc and keeps a nonempty draft", () => {
+		const { ctx, editor, spies } = createContext();
+		const cancel = armPreparation(ctx, "restart");
+		editor.setText("/restart");
+		const controller = new InputController(ctx);
+		controller.setupKeyHandlers();
+		editor.onEscape?.();
+		expect(cancel).toHaveBeenCalledTimes(1);
+		expect(editor.getText()).toBe("/restart");
+		expect(spies.abort).not.toHaveBeenCalled();
+		expect(spies.shutdown).not.toHaveBeenCalled();
+		expect(spies.showStatus).toHaveBeenCalledWith("Checkpoint cancelled; /restart was not run.");
+	});
+
+	it("cancels checkpoint prep on Ctrl+C without clearing the editor or shutting down", () => {
+		const { ctx, editor, spies } = createContext();
+		const cancel = armPreparation(ctx, "dump");
+		editor.setText("/dump");
+		const controller = new InputController(ctx);
+		controller.setupKeyHandlers();
+		editor.onClear?.();
+		expect(cancel).toHaveBeenCalledTimes(1);
+		expect(spies.clearEditor).not.toHaveBeenCalled();
+		expect(spies.shutdown).not.toHaveBeenCalled();
+		expect(editor.getText()).toBe("/dump");
+		expect(spies.showStatus).toHaveBeenCalledWith("Checkpoint cancelled; /dump was not run.");
+	});
+
+	it("consumes a second Ctrl+C after prep cancel without teardown", () => {
+		const { ctx, editor, spies } = createContext();
+		const cancel = armPreparation(ctx, "quit");
+		editor.setText("/quit");
+		const controller = new InputController(ctx);
+		controller.setupKeyHandlers();
+		editor.onClear?.();
+		Object.assign(ctx.session, { isBuiltinCommandPreparing: false });
+		editor.onClear?.();
+		expect(cancel).toHaveBeenCalledTimes(1);
+		expect(spies.clearEditor).not.toHaveBeenCalled();
+		expect(spies.shutdown).not.toHaveBeenCalled();
+		expect(editor.getText()).toBe("/quit");
+	});
+
+	it("cancels checkpoint prep on Ctrl+D without shutting down", () => {
+		const { ctx, editor, spies } = createContext();
+		const cancel = armPreparation(ctx, "quit");
+		const controller = new InputController(ctx);
+		controller.setupKeyHandlers();
+		editor.onExit?.();
+		expect(cancel).toHaveBeenCalledTimes(1);
+		expect(spies.shutdown).not.toHaveBeenCalled();
+		expect(spies.showStatus).toHaveBeenCalledWith("Checkpoint cancelled; /quit was not run.");
+	});
+});

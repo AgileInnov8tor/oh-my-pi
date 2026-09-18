@@ -15,6 +15,7 @@ import { BUILTIN_MARKETPLACE_SLASH_COMMANDS, reloadTuiPluginState } from "./buil
 import { BUILTIN_MODE_SLASH_COMMANDS } from "./builtin-modes";
 import { BUILTIN_SESSION_SLASH_COMMANDS } from "./builtin-session";
 import { parseSlashCommand } from "./helpers/parse";
+import { applyGuardResumeHandoff } from "../session/kontinuo-resume";
 import type {
 	BuiltinSlashCommand,
 	ParsedSlashCommand,
@@ -139,34 +140,50 @@ export async function executeBuiltinSlashCommand(
 		runtime.ctx.editor.setText("");
 		return true;
 	}
-	if (command.handleTui) {
-		const result = await command.handleTui(parsed, runtime);
-		if (result && typeof result === "object" && "prompt" in result) return result.prompt;
-		return true;
-	}
-	if (command.handle) {
-		// No TUI-specific override → adapt the ACP/text-mode `handle` to the
-		// TUI by routing `runtime.output` through `ctx.showStatus`, clearing
-		// the editor after the call, and reusing the active session's plugin
-		// reload pipeline. Spec authors get a single body usable from either
-		// dispatcher without forcing every TUI test to construct the full
-		// `SlashCommandRuntime` shape.
-		const ctx = runtime.ctx;
-		const adapted: SlashCommandRuntime = {
-			session: ctx.session,
-			sessionManager: ctx.sessionManager,
-			settings: ctx.settings,
-			cwd: ctx.sessionManager.getCwd(),
-			output: (text: string) => {
-				ctx.showStatus(text);
-			},
-			refreshCommands: () => ctx.refreshSlashCommandState(),
-			reloadPlugins: () => reloadTuiPluginState(ctx),
+	if (command.handleTui || command.handle) {
+		const runNative = async (): Promise<string | boolean> => {
+			if (command.handleTui) {
+				const result = await command.handleTui(parsed, runtime);
+				if (result && typeof result === "object" && "prompt" in result) return result.prompt;
+				return true;
+			}
+			const ctx = runtime.ctx;
+			const adapted: SlashCommandRuntime = {
+				session: ctx.session,
+				sessionManager: ctx.sessionManager,
+				settings: ctx.settings,
+				cwd: ctx.sessionManager.getCwd(),
+				output: (message: string) => {
+					ctx.showStatus(message);
+				},
+				refreshCommands: () => ctx.refreshSlashCommandState(),
+				reloadPlugins: () => reloadTuiPluginState(ctx),
+			};
+			const result = await command.handle!(parsed, adapted);
+			ctx.editor.setText("");
+			if (result && typeof result === "object" && "prompt" in result) return result.prompt;
+			return true;
 		};
-		const result = await command.handle(parsed, adapted);
-		ctx.editor.setText("");
-		if (result && typeof result === "object" && "prompt" in result) return result.prompt;
-		return true;
+		const session = runtime.ctx.session as { runBuiltinCommand?: typeof runtime.ctx.session.runBuiltinCommand };
+		if (typeof session.runBuiltinCommand !== "function") {
+			return runNative();
+		}
+		const gated = await session.runBuiltinCommand(
+			{ name: command.name, text, args: parsed.args },
+			handoff => {
+				applyGuardResumeHandoff({
+					commandName: command.name,
+					resumeText: handoff?.resumeText,
+					session: runtime.ctx.session,
+				});
+				return runNative();
+			},
+		);
+		if (gated.status === "blocked") {
+			runtime.ctx.showError(gated.reason);
+			return true;
+		}
+		return gated.value;
 	}
 	return false;
 }
@@ -174,6 +191,33 @@ export async function executeBuiltinSlashCommand(
 /** Look up a unified spec by name or alias. Used by the ACP dispatcher. */
 export function lookupBuiltinSlashCommand(name: string): SlashCommandSpec | undefined {
 	return BUILTIN_SLASH_COMMAND_LOOKUP.get(name);
+}
+
+export function canonicalBuiltinCommandName(name: string): string | undefined {
+	return BUILTIN_SLASH_COMMAND_LOOKUP.get(name)?.name;
+}
+
+export function normalizeBuiltinCommandGuards(
+	mapping: unknown,
+): { ok: true; value: Record<string, string[]> } | { ok: false; error: string } {
+	if (mapping === undefined || mapping === null) {
+		return { ok: true, value: {} };
+	}
+	if (typeof mapping !== "object" || Array.isArray(mapping)) {
+		return { ok: false, error: "builtinCommandGuards must be a mapping of command names to guard id arrays" };
+	}
+	const value: Record<string, string[]> = {};
+	for (const [key, ids] of Object.entries(mapping as Record<string, unknown>)) {
+		const canonical = canonicalBuiltinCommandName(key);
+		if (!canonical) {
+			return { ok: false, error: `Unknown builtin command in builtinCommandGuards: ${key}` };
+		}
+		if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || id.length === 0)) {
+			return { ok: false, error: `builtinCommandGuards.${key} must be an array of nonempty guard ids` };
+		}
+		value[canonical] = ids;
+	}
+	return { ok: true, value };
 }
 
 export type { ParsedSlashCommand, SlashCommandResult, SlashCommandRuntime, SlashCommandSpec, TuiSlashCommandRuntime };

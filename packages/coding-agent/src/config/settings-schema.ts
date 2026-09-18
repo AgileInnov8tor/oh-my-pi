@@ -229,6 +229,7 @@ export interface ModelTagsSettings {
 // under `as const` while still letting SettingValue infer the correct element type.
 const EMPTY_STRING_ARRAY: string[] = [];
 const EMPTY_STRING_RECORD: Record<string, string> = {};
+const EMPTY_STRING_ARRAY_RECORD: Record<string, string[]> = {};
 const EMPTY_NUMBER_RECORD: Record<string, number> = {};
 const EMPTY_AGENT_SERVICE_TIER_OVERRIDES: Record<string, ServiceTierInheritSettingValue> = {};
 const DEFAULT_CYCLE_ORDER: string[] = ["smol", "default", "slow"];
@@ -493,6 +494,8 @@ export const SETTINGS_SCHEMA = {
 	},
 
 	disabledExtensions: { type: "array", default: EMPTY_STRING_ARRAY },
+
+	builtinCommandGuards: { type: "record", default: EMPTY_STRING_ARRAY_RECORD },
 
 	modelRoleStorage: {
 		type: "enum",

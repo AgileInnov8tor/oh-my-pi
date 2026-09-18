@@ -1532,3 +1532,71 @@ describe("/move preflight flush", () => {
 		}
 	});
 });
+
+describe("ACP builtin command guards", () => {
+	it("does not run the native handler when the guard blocks", async () => {
+		const { output, runtime } = createRuntime();
+		let executed = 0;
+		Object.assign(runtime.session, {
+			runBuiltinCommand: async (
+				_request: { name: string; text: string; args: string },
+				_execute: () => Promise<unknown>,
+			) => ({ status: "blocked" as const, reason: "nope" }),
+			compact: async () => {
+				executed += 1;
+			},
+		});
+
+		const result = await executeAcpBuiltinSlashCommand("/compact", runtime);
+		expect(result).toEqual({ consumed: true });
+		expect(executed).toBe(0);
+		expect(output).toEqual(["nope"]);
+	});
+
+	it("admits RPC commands synchronously and does not schedule a duplicate", async () => {
+		const { output, runtime } = createRuntime();
+		let admitted = 0;
+		const scheduled: Array<() => Promise<void>> = [];
+		Object.assign(runtime.session, {
+			admitBuiltinCommand: () => {
+				admitted += 1;
+				if (admitted > 1) {
+					return { ok: false as const, reason: "Checkpoint already in progress; wait or cancel." };
+				}
+				return { ok: true as const };
+			},
+			runBuiltinCommand: () => Promise.withResolvers<never>().promise,
+		});
+		const rpcRuntime = {
+			...runtime,
+			runCommandInBackground: (task: () => Promise<void>) => {
+				scheduled.push(task);
+			},
+		};
+
+		const first = await executeAcpBuiltinSlashCommand("/compact", rpcRuntime);
+		const second = await executeAcpBuiltinSlashCommand("/handoff", rpcRuntime);
+		expect(first).toEqual({ consumed: true });
+		expect(second).toEqual({ consumed: true });
+		expect(scheduled).toHaveLength(1);
+		expect(output).toEqual(["Checkpoint already in progress; wait or cancel."]);
+	});
+
+	it("does not schedule when admitBuiltinCommand is missing", async () => {
+		const { output, runtime } = createRuntime();
+		const scheduled: Array<() => Promise<void>> = [];
+		Object.assign(runtime.session, {
+			runBuiltinCommand: async () => ({ status: "executed" as const, value: undefined }),
+		});
+		const rpcRuntime = {
+			...runtime,
+			runCommandInBackground: (task: () => Promise<void>) => {
+				scheduled.push(task);
+			},
+		};
+		const result = await executeAcpBuiltinSlashCommand("/compact", rpcRuntime);
+		expect(result).toEqual({ consumed: true });
+		expect(scheduled).toHaveLength(0);
+		expect(output).toEqual(["Checkpoint blocked: builtin command guard admission is not available."]);
+	});
+});

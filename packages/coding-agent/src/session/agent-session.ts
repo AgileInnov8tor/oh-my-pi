@@ -149,6 +149,15 @@ import { emitSessionShutdownEvent } from "../extensibility/extensions";
 import { ManagedTimers } from "../extensibility/extensions/managed-timers";
 import { createExtensionModelQuery } from "../extensibility/extensions/model-api";
 import type { CompactOptions, ContextUsage } from "../extensibility/extensions/types";
+import type { BuiltinCommandGuardContext, BuiltinCommandGuardEvent } from "../extensibility/extensions/types";
+import {
+	BuiltinCommandGate,
+	type BuiltinCommandRequest,
+	type BuiltinCommandRunResult,
+	composeGuardSignals,
+	requiredGuardIdsFromSettings,
+} from "./builtin-command-gate";
+import { nonemptyResumeText } from "./kontinuo-resume";
 import type { HookCommandContext } from "../extensibility/hooks/types";
 import type { Skill, SkillWarning } from "../extensibility/skills";
 import { expandSlashCommand, type FileSlashCommand } from "../extensibility/slash-commands";
@@ -742,6 +751,8 @@ export class AgentSession {
 	#codexResetCoordinator: CodexAutoRedeemCoordinator;
 	// Extension system
 	#extensionRunner: ExtensionRunner | undefined = undefined;
+	#builtinCommandGate: BuiltinCommandGate | undefined;
+	#kontinuoResumeText: string | undefined;
 	#getEvalPreludes: (() => readonly EvalPreludeDefinition[]) | undefined;
 	#reconcileBrowserMcpFilter: AgentSessionConfig["reconcileBrowserMcpFilter"];
 	/**
@@ -2499,6 +2510,96 @@ export class AgentSession {
 	 */
 	emitNotice(level: "info" | "warning" | "error", message: string, source?: string): void {
 		this.#emit({ type: "notice", level, message, source });
+	}
+
+	get isBuiltinCommandPreparing(): boolean {
+		return this.#builtinCommandGate?.isPreparing === true;
+	}
+
+	get builtinCommandPreparationName(): string | undefined {
+		return this.#builtinCommandGate?.preparingCommandName;
+	}
+
+	admitBuiltinCommand(request: BuiltinCommandRequest): { ok: true } | { ok: false; reason: string } {
+		const admitted = this.#getBuiltinCommandGate().admit(request);
+		if (!admitted.ok) return admitted;
+		return { ok: true };
+	}
+
+	cancelBuiltinCommandPreparation(): boolean {
+		return this.#builtinCommandGate?.cancel() === true;
+	}
+
+	async runBuiltinCommand<T>(
+		request: BuiltinCommandRequest,
+		execute: () => Promise<T>,
+		options?: { preAdmitted?: boolean },
+	): Promise<BuiltinCommandRunResult<T>> {
+		return this.#getBuiltinCommandGate().run(request, execute, options);
+	}
+
+	#getBuiltinCommandGate(): BuiltinCommandGate {
+		return (this.#builtinCommandGate ??= new BuiltinCommandGate({
+			isBusy: () =>
+				this.isStreaming ||
+				this.isCompacting ||
+				this.isGeneratingHandoff ||
+				this.isBashRunning ||
+				this.isEvalRunning ||
+				(this.getAsyncJobSnapshot()?.running.length ?? 0) > 0,
+			identity: () => ({
+				cwd: this.sessionManager.getCwd(),
+				sessionId: this.sessionManager.getSessionId(),
+				leafId: this.sessionManager.getLeafId(),
+			}),
+			requiredGuardIds: (canonicalName) =>
+				requiredGuardIdsFromSettings(this.settings.get("builtinCommandGuards"), canonicalName),
+			hasGuard: (id) => this.#extensionRunner?.getBuiltinCommandGuard(id) !== undefined,
+			invokeGuard: async (id, event, ctx, timeoutMs) => {
+				const runner = this.#extensionRunner;
+				if (!runner) {
+					return {
+						allow: false,
+						reason: `Checkpoint blocked: required guard "${id}" is not registered.`,
+					};
+				}
+				return runner.invokeBuiltinCommandGuard(id, event, ctx, timeoutMs, (_kind, message) => ({
+					allow: false,
+					reason: message.startsWith("Checkpoint ") ? message : `Checkpoint blocked: ${message}`,
+				}));
+			},
+			createContext: (event) => this.#createBuiltinCommandGuardContext(event),
+			reportAdmission: (canonicalName) => {
+				this.emitNotice("info", `Saving Kontinuo checkpoint before /${canonicalName}…`);
+			},
+			now: () => Date.now(),
+		}));
+	}
+
+	#createBuiltinCommandGuardContext(event: BuiltinCommandGuardEvent): BuiltinCommandGuardContext {
+		return {
+			getBranch: () => this.sessionManager.getBranch(),
+			reportStatus: async (message) => {
+				const safe = this.#obfuscator?.hasSecrets() ? this.#obfuscator.obfuscate(message) : message;
+				this.emitNotice("info", safe);
+			},
+			runEphemeralTurn: async ({ promptText, signal }) => {
+				if (event.signal.aborted || Date.now() >= event.deadlineAt) {
+					throw new Error("Checkpoint blocked: preparation deadline expired.");
+				}
+				const composed = composeGuardSignals(event, signal);
+				const result = await this.runEphemeralTurn({
+					promptText,
+					signal: composed,
+					dedupeReply: false,
+				});
+				let replyText = result.replyText;
+				if (this.#obfuscator?.hasSecrets()) {
+					replyText = this.#obfuscator.obfuscate(replyText);
+				}
+				return { replyText, stopReason: result.assistantMessage.stopReason };
+			},
+		};
 	}
 
 	#recordToolExecutionStart(event: Extract<AgentEvent, { type: "tool_execution_start" }>): void {
@@ -4669,6 +4770,7 @@ export class AgentSession {
 	 * gap slips past the disposal guards.
 	 */
 	beginDispose(): void {
+		this.cancelBuiltinCommandPreparation();
 		this.#isDisposed = true;
 		this.#modelDiscoveryAbortController.abort();
 		this.#queuedMessageDrainBlocked = false;
@@ -5585,6 +5687,14 @@ export class AgentSession {
 		return this.#tools.refreshBaseSystemPrompt(commitIf);
 	}
 
+	getKontinuoResumeText(): string | undefined {
+		return this.#kontinuoResumeText;
+	}
+
+	setKontinuoResumeText(text: string | undefined): void {
+		this.#kontinuoResumeText = nonemptyResumeText(text);
+	}
+
 	/** Replaces connected MCP tools and enables them immediately. */
 	refreshMCPTools(mcpTools: CustomTool[]): Promise<void> {
 		return this.#tools.refreshMCPTools(mcpTools);
@@ -6296,6 +6406,9 @@ export class AgentSession {
 	 * the ACP agent) use this to know whether to expect an `agent_end` event.
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<boolean> {
+		if (this.isBuiltinCommandPreparing) {
+			throw new Error("Checkpoint already in progress; wait or cancel.");
+		}
 		return this.#admitSubmission(() => this.#prompt(text, options));
 	}
 
@@ -8205,6 +8318,7 @@ export class AgentSession {
 		/** Internal `/compact` startup keeps the manual-compaction marker alive while aborting the active turn. */
 		preserveCompaction?: boolean;
 	}): Promise<void> {
+		this.cancelBuiltinCommandPreparation();
 		const userInterrupt = options?.reason === USER_INTERRUPT_LABEL;
 		this.#pendingAbortErrorId = userInterrupt ? AIError.create(AIError.Flag.UserInterrupt) : undefined;
 		if (userInterrupt) this.#advisors.autoResumeSuppressed = true;

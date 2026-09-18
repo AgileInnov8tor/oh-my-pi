@@ -31,6 +31,10 @@ import { ManagedTimers } from "./managed-timers";
 import { createExtensionModelQuery } from "./model-api";
 import type { ComposerShapeDefinition } from "@oh-my-pi/pi-tui/overlays/composer-shape-registry";
 import type {
+	BuiltinCommandGuardContext,
+	BuiltinCommandGuardEvent,
+	BuiltinCommandGuardHandler,
+	BuiltinCommandGuardResult,
 	AfterProviderResponseEvent,
 	AssistantThinkingRenderer,
 	BeforeAgentStartEvent,
@@ -85,6 +89,15 @@ import type {
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string[];
+}
+
+function isBuiltinCommandGuardResultValue(value: unknown): value is BuiltinCommandGuardResult {
+	if (!value || typeof value !== "object") return false;
+	const result = value as { allow?: unknown; reason?: unknown; resumeText?: unknown };
+	if (result.allow === true) {
+		return result.resumeText === undefined || typeof result.resumeText === "string";
+	}
+	return result.allow === false && typeof result.reason === "string" && result.reason.length > 0;
 }
 
 export type ExtensionErrorListener = (error: ExtensionError) => void;
@@ -245,7 +258,7 @@ function createHandlerContext(
  * review, `chatgpt-codex-connector[bot]`). `setTimeout` returns a handle we
  * can `clearTimeout` on the winning branch.
  */
-async function raceHandlerWithTimeout<T>(
+export async function raceHandlerWithTimeout<T>(
 	work: (handlerSignal: AbortSignal, timeoutBudget: HandlerTimeoutBudget) => Promise<T> | T,
 	timeoutMs: number,
 	signal?: AbortSignal,
@@ -464,6 +477,7 @@ export class ExtensionRunner {
 	#toolRegistrationScope = new AsyncLocalStorage<ToolRegistrationScope>();
 	#toolRegistrationBarrier: Promise<void> | undefined;
 	#initialized = false;
+	#builtinCommandGuards = new Map<string, BuiltinCommandGuardHandler>();
 	/**
 	 * Buffer for `credential_disabled` events received via {@link emitCredentialDisabled}
 	 * before {@link initialize} has run. Drained through {@link emit} once initialize sets
@@ -617,6 +631,7 @@ export class ExtensionRunner {
 		this.#uiContext = noOpUIContext;
 		this.#getMemoryFn = getMemory;
 		this.#getAsyncJobSnapshotFn = getAsyncJobSnapshot ?? (() => null);
+		this.#installBuiltinCommandGuards();
 	}
 
 	/**
@@ -1147,6 +1162,74 @@ export class ExtensionRunner {
 			}
 		}
 		return undefined;
+	}
+
+	getBuiltinCommandGuard(id: string): BuiltinCommandGuardHandler | undefined {
+		return this.#builtinCommandGuards.get(id);
+	}
+
+	async invokeBuiltinCommandGuard(
+		id: string,
+		event: BuiltinCommandGuardEvent,
+		ctx: BuiltinCommandGuardContext,
+		timeoutMs: number,
+		onFailure: (kind: "timeout" | "error" | "abort" | "malformed" | "missing", message: string) => BuiltinCommandGuardResult,
+	): Promise<BuiltinCommandGuardResult> {
+		const handler = this.#builtinCommandGuards.get(id);
+		if (!handler) {
+			return onFailure("missing", `required guard "${id}" is not registered`);
+		}
+		try {
+			const raced = await raceHandlerWithTimeout(() => handler(event, ctx), timeoutMs, event.signal);
+			if (raced === EXTENSION_HANDLER_ABORTED) {
+				return onFailure("abort", "cancelled");
+			}
+			if (raced === EXTENSION_HANDLER_TIMEOUT) {
+				return onFailure("timeout", `guard "${id}" timed out`);
+			}
+			if (!isBuiltinCommandGuardResultValue(raced)) {
+				return onFailure("malformed", `guard "${id}" returned a malformed result`);
+			}
+			return raced;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.emitError({
+				extensionPath: "<builtin-command-guard>",
+				event: id,
+				error: message,
+			});
+			return onFailure("error", `guard "${id}" failed: ${message}`);
+		}
+	}
+
+	#installBuiltinCommandGuards(): void {
+		const owners = new Map<string, { path: string; handler: BuiltinCommandGuardHandler }>();
+		const rejected = new Set<string>();
+		for (const ext of this.extensions) {
+			for (const [id, handler] of ext.builtinCommandGuards ?? []) {
+				if (rejected.has(id)) continue;
+				const existing = owners.get(id);
+				if (existing) {
+					rejected.add(id);
+					owners.delete(id);
+					this.emitError({
+						extensionPath: ext.path,
+						event: "registerBuiltinCommandGuard",
+						error: `Duplicate builtin command guard id "${id}"`,
+					});
+					this.emitError({
+						extensionPath: existing.path,
+						event: "registerBuiltinCommandGuard",
+						error: `Duplicate builtin command guard id "${id}"`,
+					});
+					continue;
+				}
+				owners.set(id, { path: ext.path, handler });
+			}
+		}
+		for (const [id, owner] of owners) {
+			this.#builtinCommandGuards.set(id, owner.handler);
+		}
 	}
 
 	/**

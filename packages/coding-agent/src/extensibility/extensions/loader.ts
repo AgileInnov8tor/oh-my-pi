@@ -40,6 +40,7 @@ import { getAllPluginExtensionPaths } from "../plugins/loader";
 import { resolvePath, withHostGuard } from "../utils";
 import type { ComposerShapeDefinition } from "@oh-my-pi/pi-tui/overlays/composer-shape-registry";
 import type {
+	BuiltinCommandGuardHandler,
 	AssistantThinkingRenderer,
 	Extension,
 	ExtensionAPI,
@@ -195,6 +196,8 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 		private readonly cwd: string,
 		public readonly events: EventBus,
 	) {}
+	#registrationOpen = true;
+
 
 	on<F extends HandlerFn>(event: string, handler: F): void {
 		const list = this.extension.handlers.get(event) ?? [];
@@ -229,6 +232,23 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 		},
 	): void {
 		this.extension.commands.set(name, { name, ...options });
+	}
+
+	registerBuiltinCommandGuard(id: string, handler: BuiltinCommandGuardHandler): void {
+		if (!this.#registrationOpen) {
+			throw new Error("registerBuiltinCommandGuard is only allowed during extension loading");
+		}
+		if (typeof id !== "string" || id.length === 0) {
+			throw new Error("builtin command guard id must be a nonempty string");
+		}
+		if (this.extension.builtinCommandGuards.has(id)) {
+			throw new Error(`Duplicate builtin command guard id "${id}"`);
+		}
+		this.extension.builtinCommandGuards.set(id, handler);
+	}
+
+	sealRegistrations(): void {
+		this.#registrationOpen = false;
 	}
 
 	setLabel(label: string): void {
@@ -375,6 +395,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
+		builtinCommandGuards: new Map(),
 	};
 }
 
@@ -438,9 +459,15 @@ async function bindExtension(
 	try {
 		const extension = createExtension(extensionPath, imported.resolvedPath);
 		const api = new ConcreteExtensionAPI(PiCodingAgent, extension, runtime, cwd, eventBus);
-		await withHostGuard(() => runExtensionFactory(factory, api, runtime));
-
-		return { extension, error: null };
+		try {
+			await withHostGuard(() => runExtensionFactory(factory, api, runtime));
+			api.sealRegistrations();
+			return { extension, error: null };
+		} catch (err) {
+			extension.builtinCommandGuards.clear();
+			const message = err instanceof Error ? err.message : String(err);
+			return { extension: null, error: `Failed to load extension: ${message}` };
+		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		return { extension: null, error: `Failed to load extension: ${message}` };
@@ -459,8 +486,14 @@ export async function loadExtensionFromFactory(
 ): Promise<Extension> {
 	const extension = createExtension(name, name);
 	const api = new ConcreteExtensionAPI(PiCodingAgent, extension, runtime, cwd, eventBus);
-	await runExtensionFactory(factory, api, runtime);
-	return extension;
+	try {
+		await runExtensionFactory(factory, api, runtime);
+		api.sealRegistrations();
+		return extension;
+	} catch (error) {
+		extension.builtinCommandGuards.clear();
+		throw error;
+	}
 }
 
 /**

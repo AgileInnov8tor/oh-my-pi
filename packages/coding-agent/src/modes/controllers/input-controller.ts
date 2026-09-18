@@ -209,6 +209,7 @@ export class InputController {
 	#globalEditorActionsListenerInstalled = false;
 	#expandToolsListenerInstalled = false;
 	#inlineMouseListenerInstalled = false;
+	#prepCancelLatchUntil = 0;
 
 	/** Click-candidate id the hover band currently tracks; repaint only on change. */
 	#lastHoverClickId: string | undefined;
@@ -216,6 +217,15 @@ export class InputController {
 	/** Return the last full editor snapshot delivered by its change contract. */
 	getDraftText(): string {
 		return this.#draftText ?? this.ctx.editor.getText();
+	}
+
+	#cancelCheckpointPreparation(): boolean {
+		if (!this.ctx.session.isBuiltinCommandPreparing) return false;
+		const name = this.ctx.session.builtinCommandPreparationName ?? "command";
+		this.ctx.session.cancelBuiltinCommandPreparation();
+		this.ctx.showStatus(`Checkpoint cancelled; /${name} was not run.`);
+		this.#prepCancelLatchUntil = Date.now() + 500;
+		return true;
 	}
 
 	// Tap counter for the double-← gesture; reset whenever a quiet gap
@@ -415,6 +425,10 @@ export class InputController {
 				const handlers = [...this.ctx.mcpTestEscapeHandlers];
 				this.ctx.mcpTestEscapeHandlers.clear();
 				for (const handler of handlers) handler();
+				return;
+			}
+
+			if (this.#cancelCheckpointPreparation()) {
 				return;
 			}
 
@@ -864,6 +878,11 @@ export class InputController {
 			const hasPendingImages = this.ctx.editor.pendingImages.length > 0;
 			if ((!isSettingsInitialized() || settings.get("emojiAutocomplete")) && text) text = expandEmoticons(text);
 
+			if (this.ctx.session.isBuiltinCommandPreparing) {
+				this.ctx.showStatus("Checkpoint already in progress; wait or cancel.");
+				return;
+			}
+
 			// Focused subagent session: the editor is a plain chat box for it.
 			// Everything below (continue shortcuts, slash/bash/python, loop,
 			// compaction queueing) is main-session-only.
@@ -1308,6 +1327,10 @@ export class InputController {
 			});
 		}
 
+
+		if (this.#cancelCheckpointPreparation() || Date.now() < this.#prepCancelLatchUntil) {
+			return;
+		}
 		// Hard-abort: a Ctrl+C arriving while shutdown() is already running
 		// means the user has waited long enough for whatever teardown step is
 		// stuck (typically an extension's session_shutdown handler hanging on
@@ -1340,6 +1363,9 @@ export class InputController {
 	}
 
 	handleCtrlD(): void {
+		if (this.#cancelCheckpointPreparation() || Date.now() < this.#prepCancelLatchUntil) {
+			return;
+		}
 		// Editor text (if any) is snapshotted at the start of shutdown() and
 		// persisted as a draft for the next resume. Empty text is also fine —
 		// shutdown clears any stale sidecar in that case.
@@ -1643,6 +1669,11 @@ export class InputController {
 		const imageLinks =
 			images && this.ctx.editor.pendingImageLinks.length > 0 ? [...this.ctx.editor.pendingImageLinks] : undefined;
 		if (!text && !images) return;
+
+		if (this.ctx.session.isBuiltinCommandPreparing) {
+			this.ctx.showStatus("Checkpoint already in progress; wait or cancel.");
+			return;
+		}
 
 		// Focused subagent session: follow-ups go to it; non-chat input is gated.
 		if (this.ctx.focusedAgentId) {

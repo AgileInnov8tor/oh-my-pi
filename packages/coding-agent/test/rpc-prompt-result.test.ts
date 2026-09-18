@@ -4,6 +4,7 @@ import {
 	reportLocalOnlyPromptResult,
 	watchAndReportLocalOnlyPromptResult,
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-mode";
+import { executeAcpBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/acp-builtins";
 import type { ExtensionActions } from "../src/extensibility/extensions/types";
 import { initializeExtensions } from "../src/modes/runtime-init";
 import type { AgentSession } from "../src/session/agent-session";
@@ -488,5 +489,99 @@ describe("watchAndReportLocalOnlyPromptResult", () => {
 		await waitForPromptHandlers(prompt);
 
 		expect(output).toEqual([]);
+	});
+});
+
+describe("RPC protected builtin command guards", () => {
+	test("RPC abort during generation cancels preparation and does not run the native command", async () => {
+		const output: string[] = [];
+		const { promise: hang, resolve } = Promise.withResolvers<void>();
+		let executed = 0;
+		let cancelled = false;
+		const session = {
+			admitBuiltinCommand: () => ({ ok: true as const }),
+			cancelBuiltinCommandPreparation: () => {
+				cancelled = true;
+				resolve();
+				return true;
+			},
+			runBuiltinCommand: async (
+				_request: { name: string; text: string; args: string },
+				execute: () => Promise<unknown>,
+			) => {
+				await hang;
+				if (cancelled) {
+					return { status: "blocked" as const, reason: "Checkpoint cancelled; /compact was not run." };
+				}
+				return { status: "executed" as const, value: await execute() };
+			},
+			compact: async () => {
+				executed += 1;
+			},
+		};
+		const scheduled: Array<Promise<void>> = [];
+		const runtime = {
+			session,
+			cwd: "/tmp",
+			output: async (text: string) => {
+				output.push(text);
+			},
+			runCommandInBackground: (task: () => Promise<void>) => {
+				scheduled.push(task());
+			},
+		};
+		const result = await executeAcpBuiltinSlashCommand("/compact", runtime as never);
+		expect(result).toEqual({ consumed: true });
+		session.cancelBuiltinCommandPreparation();
+		await Promise.all(scheduled);
+		expect(executed).toBe(0);
+		expect(cancelled).toBe(true);
+		expect(output).toEqual(["Checkpoint cancelled; /compact was not run."]);
+	});
+
+	test("rejects a second protected RPC command while the first is executing", async () => {
+		const output: string[] = [];
+		let state: "idle" | "preparing" | "executing" = "idle";
+		const { promise: releaseExecute, resolve: resolveExecute } = Promise.withResolvers<void>();
+		const session = {
+			admitBuiltinCommand: () => {
+				if (state !== "idle") {
+					return { ok: false as const, reason: "Checkpoint already in progress; wait or cancel." };
+				}
+				state = "preparing";
+				return { ok: true as const };
+			},
+			runBuiltinCommand: async (
+				_request: { name: string; text: string; args: string },
+				execute: () => Promise<unknown>,
+			) => {
+				state = "executing";
+				const value = await execute();
+				state = "idle";
+				return { status: "executed" as const, value };
+			},
+			compact: async () => {
+				await releaseExecute;
+			},
+			handoff: async () => ({ document: "nope" }),
+		};
+		const scheduled: Array<Promise<void>> = [];
+		const runtime = {
+			session,
+			cwd: "/tmp",
+			output: async (text: string) => {
+				output.push(text);
+			},
+			runCommandInBackground: (task: () => Promise<void>) => {
+				scheduled.push(task());
+			},
+		};
+		const first = await executeAcpBuiltinSlashCommand("/compact", runtime as never);
+		const second = await executeAcpBuiltinSlashCommand("/handoff", runtime as never);
+		expect(first).toEqual({ consumed: true });
+		expect(second).toEqual({ consumed: true });
+		expect(output).toEqual(["Checkpoint already in progress; wait or cancel."]);
+		resolveExecute();
+		await Promise.all(scheduled);
 	});
 });

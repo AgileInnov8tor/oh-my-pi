@@ -14,7 +14,7 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { convertToLlm, wrapSteeringForModel } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { ExtensionRuntime, loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
+import { ExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import {
 	EXTENSION_HANDLER_TIMEOUT_MS,
 	ExtensionRunner,
@@ -35,6 +35,7 @@ import { ExtensionToolWrapper } from "@oh-my-pi/pi-coding-agent/extensibility/ex
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { getProjectAgentDir, logger, TempDir } from "@oh-my-pi/pi-utils";
+import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 
 describe("ExtensionRunner", () => {
 	let tempDir: TempDir;
@@ -4010,6 +4011,7 @@ describe("ExtensionRunner", () => {
 				commands: new Map(),
 				flags: new Map(),
 				shortcuts: new Map(),
+				builtinCommandGuards: new Map(),
 			};
 			return new ExtensionRunner([extension], new ExtensionRuntime(), tempDir.path(), sessionManager, modelRegistry);
 		};
@@ -4115,5 +4117,200 @@ describe("ExtensionRunner", () => {
 			});
 			expect(cachedTexts).toEqual(["persisted user", "persisted assistant"]);
 		});
+	});
+
+	describe("builtin command guards", () => {
+		it("keeps the 30s event-handler and 2s shutdown timeouts unchanged", () => {
+			expect(EXTENSION_HANDLER_TIMEOUT_MS).toBe(30_000);
+			expect(SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS).toBe(2_000);
+		});
+
+		it("installs neither handler when two extensions register the same guard id", async () => {
+			const runtime = new ExtensionRuntime();
+			const first = await loadExtensionFromFactory(
+				pi => {
+					pi.registerBuiltinCommandGuard("kontinuo", async () => ({ allow: true }));
+				},
+				tempDir.path(),
+				new EventBus(),
+				runtime,
+				"guard-a",
+			);
+			const second = await loadExtensionFromFactory(
+				pi => {
+					pi.registerBuiltinCommandGuard("kontinuo", async () => ({ allow: true }));
+				},
+				tempDir.path(),
+				new EventBus(),
+				runtime,
+				"guard-b",
+			);
+			const runner = new ExtensionRunner(
+				[first, second],
+				runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			expect(runner.getBuiltinCommandGuard("kontinuo")).toBeUndefined();
+		});
+
+		it("rejects duplicate guard ids in the same extension during loading", async () => {
+			const runtime = new ExtensionRuntime();
+			await expect(
+				loadExtensionFromFactory(
+					pi => {
+						pi.registerBuiltinCommandGuard("kontinuo", async () => ({ allow: true }));
+						pi.registerBuiltinCommandGuard("kontinuo", async () => ({ allow: true }));
+					},
+					tempDir.path(),
+					new EventBus(),
+					runtime,
+					"dup-same",
+				),
+			).rejects.toThrow('Duplicate builtin command guard id "kontinuo"');
+		});
+
+		it("rejects registerBuiltinCommandGuard after the factory returns", async () => {
+			const runtime = new ExtensionRuntime();
+			let api: { registerBuiltinCommandGuard: (id: string, handler: () => Promise<{ allow: true }>) => void };
+			await loadExtensionFromFactory(
+				pi => {
+					api = pi;
+					pi.registerBuiltinCommandGuard("kontinuo", async () => ({ allow: true }));
+				},
+				tempDir.path(),
+				new EventBus(),
+				runtime,
+				"after-load",
+			);
+			expect(() =>
+				api!.registerBuiltinCommandGuard("other", async () => ({ allow: true })),
+			).toThrow("registerBuiltinCommandGuard is only allowed during extension loading");
+		});
+
+		it("does not leave a usable guard when the factory throws", async () => {
+			const runtime = new ExtensionRuntime();
+			await expect(
+				loadExtensionFromFactory(
+					pi => {
+						pi.registerBuiltinCommandGuard("kontinuo", async () => ({ allow: true }));
+						throw new Error("factory boom");
+					},
+					tempDir.path(),
+					new EventBus(),
+					runtime,
+					"throwing-factory",
+				),
+			).rejects.toThrow("factory boom");
+			const runner = new ExtensionRunner([], runtime, tempDir.path(), sessionManager, modelRegistry);
+			expect(runner.getBuiltinCommandGuard("kontinuo")).toBeUndefined();
+		});
+
+		it("fail-closes on missing, malformed, thrown, and timed-out guards", async () => {
+			const runtime = new ExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				pi => {
+					pi.registerBuiltinCommandGuard("throws", async () => {
+						throw new Error("boom");
+					});
+					pi.registerBuiltinCommandGuard("malformed", async () => undefined as never);
+				},
+				tempDir.path(),
+				new EventBus(),
+				runtime,
+				"fail-closed",
+			);
+			const runner = new ExtensionRunner(
+				[extension],
+				runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const event = {
+				name: "dump",
+				text: "/dump",
+				args: "",
+				requestId: "req",
+				cwd: tempDir.path(),
+				sessionId: "s",
+				leafId: null,
+				deadlineAt: Date.now() + 1_000,
+				signal: new AbortController().signal,
+			};
+			const ctx = {
+				getBranch: () => [],
+				reportStatus: async () => {},
+				runEphemeralTurn: async () => ({ replyText: "", stopReason: "stop" as const }),
+			};
+			const onFailure = (
+				kind: "timeout" | "error" | "abort" | "malformed" | "missing",
+				message: string,
+			) => ({ allow: false as const, reason: `${kind}:${message}` });
+
+			const missing = await runner.invokeBuiltinCommandGuard("missing", event, ctx, 1_000, onFailure);
+			expect(missing.allow).toBe(false);
+			if (!missing.allow) expect(missing.reason.startsWith("missing:")).toBe(true);
+
+			const malformed = await runner.invokeBuiltinCommandGuard("malformed", event, ctx, 1_000, onFailure);
+			expect(malformed.allow).toBe(false);
+			if (!malformed.allow) expect(malformed.reason.startsWith("malformed:")).toBe(true);
+
+			const thrown = await runner.invokeBuiltinCommandGuard("throws", event, ctx, 1_000, onFailure);
+			expect(thrown.allow).toBe(false);
+			if (!thrown.allow) expect(thrown.reason.startsWith("error:")).toBe(true);
+		});
+
+		it("lets a builtin command guard run past the 30s event-handler cap", async () => {
+			// Integration against the platform clock: the 30s extension event cap
+			// uses real timers internally; fake timers cannot prove this bypass.
+			const runtime = new ExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				pi => {
+					pi.registerBuiltinCommandGuard("kontinuo", async () => {
+						await Bun.sleep(31_000);
+						return { allow: true };
+					});
+				},
+				tempDir.path(),
+				new EventBus(),
+				runtime,
+				"slow-guard",
+			);
+			const runner = new ExtensionRunner(
+				[extension],
+				runtime,
+				tempDir.path(),
+				sessionManager,
+				modelRegistry,
+			);
+			const event = {
+				name: "dump",
+				text: "/dump",
+				args: "",
+				requestId: "req",
+				cwd: tempDir.path(),
+				sessionId: "s",
+				leafId: null,
+				deadlineAt: Date.now() + 120_000,
+				signal: new AbortController().signal,
+			};
+			const ctx = {
+				getBranch: () => [],
+				reportStatus: async () => {},
+				runEphemeralTurn: async () => ({ replyText: "", stopReason: "stop" as const }),
+			};
+			const started = Date.now();
+			const result = await runner.invokeBuiltinCommandGuard(
+				"kontinuo",
+				event,
+				ctx,
+				35_000,
+				(_kind, message) => ({ allow: false, reason: message }),
+			);
+			expect(Date.now() - started).toBeGreaterThanOrEqual(31_000);
+			expect(result).toEqual({ allow: true });
+		}, 40_000);
 	});
 });

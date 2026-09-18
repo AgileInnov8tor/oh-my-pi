@@ -39,6 +39,7 @@ import type { CompactionResult } from "@oh-my-pi/pi-agent-core/compaction";
 import type { ContextUsage } from "@oh-my-pi/pi-tui/status-line/types";
 import type {
 	Api,
+	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
@@ -84,6 +85,7 @@ import type { AsyncJobSnapshot, SendUserMessageOptions } from "../../session/age
 import type { CompactMode } from "../../session/compact-modes";
 import type { CustomMessagePayload } from "../../session/messages";
 import type { ReadonlySessionManager, SessionManager } from "../../session/session-manager";
+import type { SessionEntry } from "../../session/session-entries";
 import type { BashToolInput, GlobToolInput, GrepToolInput, ReadToolInput, WriteToolInput } from "../../tools";
 import type { GlobToolDetails } from "@oh-my-pi/pi-tui/tools/glob";
 import type { GrepToolDetails } from "@oh-my-pi/pi-tui/tools/grep";
@@ -1336,6 +1338,14 @@ export interface ExtensionAPI {
 		},
 	): void;
 
+	/**
+	 * Register a fail-closed builtin-command guard. Loading-only: after the
+	 * factory returns, further registration throws. Duplicate IDs in the same
+	 * extension throw. Duplicate IDs across extensions in one runner install
+	 * neither handler.
+	 */
+	registerBuiltinCommandGuard(id: string, handler: BuiltinCommandGuardHandler): void;
+
 	/** Register a keyboard shortcut. */
 	registerShortcut(
 		shortcut: KeyId,
@@ -1732,6 +1742,7 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	builtinCommandGuards: Map<string, BuiltinCommandGuardHandler>;
 }
 
 /**
@@ -1765,3 +1776,36 @@ export interface ExtensionError {
 	error: string;
 	stack?: string;
 }
+
+// ============================================================================
+// Builtin command guards
+// ============================================================================
+
+export type BuiltinCommandGuardResult = { allow: true; resumeText?: string } | { allow: false; reason: string };
+
+export interface BuiltinCommandGuardEvent {
+	readonly name: string;
+	readonly text: string;
+	readonly args: string;
+	readonly requestId: string;
+	readonly cwd: string;
+	readonly sessionId: string;
+	readonly leafId: string | null;
+	readonly deadlineAt: number;
+	readonly signal: AbortSignal;
+}
+
+export interface BuiltinCommandGuardContext {
+	getBranch(): SessionEntry[];
+	reportStatus(message: string): Promise<void>;
+	runEphemeralTurn(args: {
+		promptText: string;
+		signal: AbortSignal;
+		dedupeReply: false;
+	}): Promise<{ replyText: string; stopReason: AssistantMessage["stopReason"] }>;
+}
+
+export type BuiltinCommandGuardHandler = (
+	event: BuiltinCommandGuardEvent,
+	ctx: BuiltinCommandGuardContext,
+) => Promise<BuiltinCommandGuardResult>;
