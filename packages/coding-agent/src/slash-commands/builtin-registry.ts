@@ -164,7 +164,17 @@ export async function executeBuiltinSlashCommand(
 			if (result && typeof result === "object" && "prompt" in result) return result.prompt;
 			return true;
 		};
-		const session = runtime.ctx.session;
+		const session = runtime.ctx.session as
+			| {
+					runBuiltinCommand?: (
+						request: { name: string; text: string; args: string },
+						execute: (handoff?: { resumeText?: string }) => Promise<string | boolean>,
+					) => Promise<
+						| { status: "executed"; value: string | boolean; resumeText?: string }
+						| { status: "blocked"; reason: string }
+					>;
+			  }
+			| undefined;
 		if (typeof session?.runBuiltinCommand !== "function") {
 			return runNative();
 		}
