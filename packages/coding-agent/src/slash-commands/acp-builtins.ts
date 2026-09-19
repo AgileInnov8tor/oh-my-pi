@@ -2,6 +2,7 @@ import type { AvailableCommand } from "@oh-my-pi/pi-utils/acp";
 import { BUILTIN_SLASH_COMMANDS_INTERNAL, lookupBuiltinSlashCommand } from "./builtin-registry";
 import { parseSlashCommand } from "./helpers/parse";
 import type { AcpBuiltinSlashCommandResult, SlashCommandResult, SlashCommandRuntime } from "./types";
+import { requiredGuardIdsFromSettings } from "../session/builtin-command-gate";
 import { applyGuardResumeHandoff } from "../session/kontinuo-resume";
 
 export type { AcpBuiltinSlashCommandResult } from "./types";
@@ -83,7 +84,13 @@ export async function executeAcpBuiltinSlashCommand(
 		}) => { ok: true } | { ok: false; reason: string };
 	};
 
-	if (typeof session.runBuiltinCommand !== "function") {
+	const requiredGuards = requiredGuardIdsFromSettings(runtime.settings.get("builtinCommandGuards"), command.name);
+	if (!requiredGuards.ok) {
+		await runtime.output(requiredGuards.reason);
+		return { consumed: true };
+	}
+
+	if (requiredGuards.ids.length === 0 || typeof session.runBuiltinCommand !== "function") {
 		const result = await command.handle(parsed, runtime);
 		if (result === undefined) return { consumed: true };
 		return result;

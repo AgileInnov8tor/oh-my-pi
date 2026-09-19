@@ -15,6 +15,7 @@ import { BUILTIN_MARKETPLACE_SLASH_COMMANDS, reloadTuiPluginState } from "./buil
 import { BUILTIN_MODE_SLASH_COMMANDS } from "./builtin-modes";
 import { BUILTIN_SESSION_SLASH_COMMANDS } from "./builtin-session";
 import { parseSlashCommand } from "./helpers/parse";
+import { requiredGuardIdsFromSettings } from "../session/builtin-command-gate";
 import { applyGuardResumeHandoff } from "../session/kontinuo-resume";
 import type {
 	BuiltinSlashCommand,
@@ -164,6 +165,14 @@ export async function executeBuiltinSlashCommand(
 			if (result && typeof result === "object" && "prompt" in result) return result.prompt;
 			return true;
 		};
+		const requiredGuards = requiredGuardIdsFromSettings(
+			runtime.ctx.settings.get("builtinCommandGuards"),
+			command.name,
+		);
+		if (!requiredGuards.ok) {
+			runtime.ctx.showError(requiredGuards.reason);
+			return true;
+		}
 		const session = runtime.ctx.session as
 			| {
 					runBuiltinCommand?: (
@@ -175,7 +184,7 @@ export async function executeBuiltinSlashCommand(
 					>;
 			  }
 			| undefined;
-		if (typeof session?.runBuiltinCommand !== "function") {
+		if (requiredGuards.ids.length === 0 || typeof session?.runBuiltinCommand !== "function") {
 			return runNative();
 		}
 		const gated = await session.runBuiltinCommand({ name: command.name, text, args: parsed.args }, handoff => {

@@ -165,7 +165,7 @@ function stubEphemeralTurn(session: AgentSession, options?: { simulateMetadataDr
 			replyText: REPLY,
 			assistantMessage: { role: "assistant", content: [{ type: "text", text: REPLY }], stopReason: "end_turn" },
 		};
-	}) as typeof session.runEphemeralTurn;
+	}) as unknown as typeof session.runEphemeralTurn;
 }
 
 function tuiRuntime(session: AgentSession): TuiSlashCommandRuntime {
