@@ -40,7 +40,7 @@ import {
 	stripInternalDetailsFields,
 } from "./messages";
 import {
-	 type BuildSessionContextOptions,
+	type BuildSessionContextOptions,
 	buildSessionContext,
 	isTranscriptEntry,
 	type SessionContext,

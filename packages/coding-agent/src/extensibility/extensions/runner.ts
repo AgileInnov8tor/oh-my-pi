@@ -1173,7 +1173,10 @@ export class ExtensionRunner {
 		event: BuiltinCommandGuardEvent,
 		ctx: BuiltinCommandGuardContext,
 		timeoutMs: number,
-		onFailure: (kind: "timeout" | "error" | "abort" | "malformed" | "missing", message: string) => BuiltinCommandGuardResult,
+		onFailure: (
+			kind: "timeout" | "error" | "abort" | "malformed" | "missing",
+			message: string,
+		) => BuiltinCommandGuardResult,
 	): Promise<BuiltinCommandGuardResult> {
 		const handler = this.#builtinCommandGuards.get(id);
 		if (!handler) {

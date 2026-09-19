@@ -198,7 +198,6 @@ class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 	) {}
 	#registrationOpen = true;
 
-
 	on<F extends HandlerFn>(event: string, handler: F): void {
 		const list = this.extension.handlers.get(event) ?? [];
 		list.push(handler);

@@ -20,8 +20,7 @@ const GUARD_MODULE = process.env.KONTINUO_GUARD_MODULE ?? "";
 const KONTINUO_BIN = process.env.KONTINUO_BIN ?? "kontinuo";
 const KONTINUO_HOME = process.env.HOME ?? "/tmp";
 const e2eEnabled = process.env.KONTINUO_E2E === "1" && GUARD_MODULE !== "" && existsSync(GUARD_MODULE);
-const CHECKPOINT_ID =
-	"sha256:jcs:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const CHECKPOINT_ID = "sha256:jcs:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RESUME = `Kontinuo resume: ${CHECKPOINT_ID}`;
 const REPLY = JSON.stringify({
 	goal: "Ship fail-closed Kontinuo checkpoints",

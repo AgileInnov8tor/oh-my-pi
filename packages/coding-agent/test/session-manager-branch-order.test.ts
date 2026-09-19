@@ -134,5 +134,4 @@ describe("SessionManager branch ordering", () => {
 		expect(manager.getLeafId()).not.toBe(assistantId);
 		expect(userId).not.toBe(assistantId);
 	});
-
 });

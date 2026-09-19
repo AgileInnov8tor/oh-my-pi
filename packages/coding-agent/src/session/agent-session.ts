@@ -2552,9 +2552,9 @@ export class AgentSession {
 				sessionId: this.sessionManager.getSessionId(),
 				leafId: this.sessionManager.getConversationLeafId(),
 			}),
-			requiredGuardIds: (canonicalName) =>
+			requiredGuardIds: canonicalName =>
 				requiredGuardIdsFromSettings(this.settings.get("builtinCommandGuards"), canonicalName),
-			hasGuard: (id) => this.#extensionRunner?.getBuiltinCommandGuard(id) !== undefined,
+			hasGuard: id => this.#extensionRunner?.getBuiltinCommandGuard(id) !== undefined,
 			invokeGuard: async (id, event, ctx, timeoutMs) => {
 				const runner = this.#extensionRunner;
 				if (!runner) {
@@ -2568,8 +2568,8 @@ export class AgentSession {
 					reason: message.startsWith("Checkpoint ") ? message : `Checkpoint blocked: ${message}`,
 				}));
 			},
-			createContext: (event) => this.#createBuiltinCommandGuardContext(event),
-			reportAdmission: (canonicalName) => {
+			createContext: event => this.#createBuiltinCommandGuardContext(event),
+			reportAdmission: canonicalName => {
 				this.emitNotice("info", `Saving Kontinuo checkpoint before /${canonicalName}…`);
 			},
 			now: () => Date.now(),
@@ -2579,7 +2579,7 @@ export class AgentSession {
 	#createBuiltinCommandGuardContext(event: BuiltinCommandGuardEvent): BuiltinCommandGuardContext {
 		return {
 			getBranch: () => this.sessionManager.getBranch(),
-			reportStatus: async (message) => {
+			reportStatus: async message => {
 				const safe = this.#obfuscator?.hasSecrets() ? this.#obfuscator.obfuscate(message) : message;
 				this.emitNotice("info", safe);
 			},

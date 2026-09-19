@@ -5,7 +5,6 @@ import type {
 	BuiltinCommandGuardResult,
 } from "../extensibility/extensions/types";
 import { canonicalBuiltinCommandName, normalizeBuiltinCommandGuards } from "../slash-commands/builtin-registry";
-import type { SessionEntry } from "./session-entries";
 import { nonemptyResumeText } from "./kontinuo-resume";
 
 export const BUILTIN_COMMAND_PREP_TIMEOUT_MS = 120_000;
@@ -88,7 +87,9 @@ export class BuiltinCommandGate {
 		return this.#prep?.name;
 	}
 
-	admit(request: BuiltinCommandRequest): { ok: true; event: BuiltinCommandGuardEvent } | { ok: false; reason: string } {
+	admit(
+		request: BuiltinCommandRequest,
+	): { ok: true; event: BuiltinCommandGuardEvent } | { ok: false; reason: string } {
 		const canonical = canonicalBuiltinCommandName(request.name) ?? request.name;
 		if (this.#state !== "idle") {
 			return { ok: false, reason: "Checkpoint already in progress; wait or cancel." };

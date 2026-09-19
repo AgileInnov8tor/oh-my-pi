@@ -14,7 +14,11 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { convertToLlm, wrapSteeringForModel } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { ExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
+import {
+	ExtensionRuntime,
+	loadExtensionFromFactory,
+	loadExtensions,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import {
 	EXTENSION_HANDLER_TIMEOUT_MS,
 	ExtensionRunner,
@@ -4145,13 +4149,7 @@ describe("ExtensionRunner", () => {
 				runtime,
 				"guard-b",
 			);
-			const runner = new ExtensionRunner(
-				[first, second],
-				runtime,
-				tempDir.path(),
-				sessionManager,
-				modelRegistry,
-			);
+			const runner = new ExtensionRunner([first, second], runtime, tempDir.path(), sessionManager, modelRegistry);
 			expect(runner.getBuiltinCommandGuard("kontinuo")).toBeUndefined();
 		});
 
@@ -4184,9 +4182,9 @@ describe("ExtensionRunner", () => {
 				runtime,
 				"after-load",
 			);
-			expect(() =>
-				api!.registerBuiltinCommandGuard("other", async () => ({ allow: true })),
-			).toThrow("registerBuiltinCommandGuard is only allowed during extension loading");
+			expect(() => api!.registerBuiltinCommandGuard("other", async () => ({ allow: true }))).toThrow(
+				"registerBuiltinCommandGuard is only allowed during extension loading",
+			);
 		});
 
 		it("does not leave a usable guard when the factory throws", async () => {
@@ -4221,13 +4219,7 @@ describe("ExtensionRunner", () => {
 				runtime,
 				"fail-closed",
 			);
-			const runner = new ExtensionRunner(
-				[extension],
-				runtime,
-				tempDir.path(),
-				sessionManager,
-				modelRegistry,
-			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir.path(), sessionManager, modelRegistry);
 			const event = {
 				name: "dump",
 				text: "/dump",
@@ -4244,10 +4236,10 @@ describe("ExtensionRunner", () => {
 				reportStatus: async () => {},
 				runEphemeralTurn: async () => ({ replyText: "", stopReason: "stop" as const }),
 			};
-			const onFailure = (
-				kind: "timeout" | "error" | "abort" | "malformed" | "missing",
-				message: string,
-			) => ({ allow: false as const, reason: `${kind}:${message}` });
+			const onFailure = (kind: "timeout" | "error" | "abort" | "malformed" | "missing", message: string) => ({
+				allow: false as const,
+				reason: `${kind}:${message}`,
+			});
 
 			const missing = await runner.invokeBuiltinCommandGuard("missing", event, ctx, 1_000, onFailure);
 			expect(missing.allow).toBe(false);
@@ -4278,13 +4270,7 @@ describe("ExtensionRunner", () => {
 				runtime,
 				"slow-guard",
 			);
-			const runner = new ExtensionRunner(
-				[extension],
-				runtime,
-				tempDir.path(),
-				sessionManager,
-				modelRegistry,
-			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir.path(), sessionManager, modelRegistry);
 			const event = {
 				name: "dump",
 				text: "/dump",
@@ -4302,13 +4288,10 @@ describe("ExtensionRunner", () => {
 				runEphemeralTurn: async () => ({ replyText: "", stopReason: "stop" as const }),
 			};
 			const started = Date.now();
-			const result = await runner.invokeBuiltinCommandGuard(
-				"kontinuo",
-				event,
-				ctx,
-				35_000,
-				(_kind, message) => ({ allow: false, reason: message }),
-			);
+			const result = await runner.invokeBuiltinCommandGuard("kontinuo", event, ctx, 35_000, (_kind, message) => ({
+				allow: false,
+				reason: message,
+			}));
 			expect(Date.now() - started).toBeGreaterThanOrEqual(31_000);
 			expect(result).toEqual({ allow: true });
 		}, 40_000);

@@ -34,8 +34,8 @@ function createHost(options?: {
 	const host: BuiltinCommandGateHost & { lastEvent?: BuiltinCommandGuardEvent; lastTimeoutMs?: number } = {
 		isBusy: () => options?.busy === true,
 		identity: options?.identity ?? (() => ({ cwd: "/tmp/project", sessionId: "sess-1", leafId: "leaf-1" })),
-		requiredGuardIds: (canonicalName) => ({ ok: true, ids: options?.required?.[canonicalName] ?? [] }),
-		hasGuard: (id) => options?.guards?.[id] !== undefined,
+		requiredGuardIds: canonicalName => ({ ok: true, ids: options?.required?.[canonicalName] ?? [] }),
+		hasGuard: id => options?.guards?.[id] !== undefined,
 		invokeGuard: async (id, event, ctx, timeoutMs) => {
 			host.lastEvent = event;
 			host.lastTimeoutMs = timeoutMs;
@@ -86,7 +86,7 @@ describe("BuiltinCommandGate", () => {
 
 	it("does not run the native callback while a guard is unresolved", async () => {
 		let release!: (result: BuiltinCommandGuardResult) => void;
-		const pending = new Promise<BuiltinCommandGuardResult>((resolve) => {
+		const pending = new Promise<BuiltinCommandGuardResult>(resolve => {
 			release = resolve;
 		});
 		const host = createHost({
@@ -230,7 +230,7 @@ describe("BuiltinCommandGate", () => {
 
 	it("does not enter executing after cancel, and late allow does not run the callback", async () => {
 		let resolveGuard!: (result: BuiltinCommandGuardResult) => void;
-		const pending = new Promise<BuiltinCommandGuardResult>((resolve) => {
+		const pending = new Promise<BuiltinCommandGuardResult>(resolve => {
 			resolveGuard = resolve;
 		});
 		const host = createHost({
@@ -257,7 +257,7 @@ describe("BuiltinCommandGate", () => {
 
 	it("rejects a second command while preparing and releases the lock after error", async () => {
 		let resolveGuard!: (result: BuiltinCommandGuardResult) => void;
-		const pending = new Promise<BuiltinCommandGuardResult>((resolve) => {
+		const pending = new Promise<BuiltinCommandGuardResult>(resolve => {
 			resolveGuard = resolve;
 		});
 		const host = createHost({
@@ -292,7 +292,7 @@ describe("BuiltinCommandGate", () => {
 		const host = createHost({
 			required: { compact: ["kontinuo"] },
 			guards: {
-				kontinuo: async (event) => {
+				kontinuo: async event => {
 					await Bun.sleep(80);
 					if (event.signal.aborted) return { allow: false, reason: "aborted" };
 					return { allow: true };
@@ -346,7 +346,6 @@ describe("BuiltinCommandGate", () => {
 		expect(executed).toBe(1);
 	}, 40_000);
 
-
 	it("blocks when the conversation leaf changes during preparation", async () => {
 		let leafId: string | null = "msg-1";
 		const host = createHost({
@@ -390,7 +389,10 @@ describe("BuiltinCommandGate", () => {
 	});
 
 	it("admits synchronously so a duplicate RPC request cannot start a second job", () => {
-		const host = createHost({ required: { compact: ["kontinuo"] }, guards: { kontinuo: async () => ({ allow: true }) } });
+		const host = createHost({
+			required: { compact: ["kontinuo"] },
+			guards: { kontinuo: async () => ({ allow: true }) },
+		});
 		const gate = new BuiltinCommandGate(host);
 		const first = gate.admit({ name: "compact", text: "/compact", args: "" });
 		const second = gate.admit({ name: "handoff", text: "/handoff", args: "" });
@@ -414,14 +416,22 @@ describe("applyGuardResumeHandoff", () => {
 		applyGuardResumeHandoff({
 			commandName: "clear",
 			resumeText: "Kontinuo resume: id-1",
-			session: { setKontinuoResumeText: text => { session.stored = text; } },
+			session: {
+				setKontinuoResumeText: text => {
+					session.stored = text;
+				},
+			},
 		});
 		expect(session.stored).toBe("Kontinuo resume: id-1");
 
 		applyGuardResumeHandoff({
 			commandName: "clear",
 			resumeText: undefined,
-			session: { setKontinuoResumeText: text => { session.stored = text; } },
+			session: {
+				setKontinuoResumeText: text => {
+					session.stored = text;
+				},
+			},
 		});
 		expect(session.stored).toBeUndefined();
 	});
@@ -432,7 +442,11 @@ describe("applyGuardResumeHandoff", () => {
 			applyGuardResumeHandoff({
 				commandName,
 				resumeText: "Kontinuo resume: id",
-				session: { setKontinuoResumeText: text => { session.stored = text; } },
+				session: {
+					setKontinuoResumeText: text => {
+						session.stored = text;
+					},
+				},
 			});
 			expect(session.stored).toBeUndefined();
 		}
@@ -444,7 +458,11 @@ describe("applyGuardResumeHandoff", () => {
 			applyGuardResumeHandoff({
 				commandName,
 				resumeText: "Kontinuo resume: id",
-				session: { setKontinuoResumeText: text => { session.stored = text; } },
+				session: {
+					setKontinuoResumeText: text => {
+						session.stored = text;
+					},
+				},
 			});
 			expect(session.stored).toBe("keep");
 		}

@@ -891,10 +891,7 @@ describe("InputController double-tap ← gesture", () => {
 });
 
 describe("InputController checkpoint preparation cancellation", () => {
-	function armPreparation(
-		ctx: InteractiveModeContext,
-		name: string,
-	): Mock<() => boolean> {
+	function armPreparation(ctx: InteractiveModeContext, name: string): Mock<() => boolean> {
 		const cancel = vi.fn(() => true);
 		Object.assign(ctx.session, {
 			isBuiltinCommandPreparing: true,

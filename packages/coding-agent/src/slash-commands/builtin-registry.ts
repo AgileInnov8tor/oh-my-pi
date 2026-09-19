@@ -164,21 +164,18 @@ export async function executeBuiltinSlashCommand(
 			if (result && typeof result === "object" && "prompt" in result) return result.prompt;
 			return true;
 		};
-		const session = runtime.ctx.session as { runBuiltinCommand?: typeof runtime.ctx.session.runBuiltinCommand };
-		if (typeof session.runBuiltinCommand !== "function") {
+		const session = runtime.ctx.session;
+		if (typeof session?.runBuiltinCommand !== "function") {
 			return runNative();
 		}
-		const gated = await session.runBuiltinCommand(
-			{ name: command.name, text, args: parsed.args },
-			handoff => {
-				applyGuardResumeHandoff({
-					commandName: command.name,
-					resumeText: handoff?.resumeText,
-					session: runtime.ctx.session,
-				});
-				return runNative();
-			},
-		);
+		const gated = await session.runBuiltinCommand({ name: command.name, text, args: parsed.args }, handoff => {
+			applyGuardResumeHandoff({
+				commandName: command.name,
+				resumeText: handoff?.resumeText,
+				session: runtime.ctx.session,
+			});
+			return runNative();
+		});
 		if (gated.status === "blocked") {
 			runtime.ctx.showError(gated.reason);
 			return true;
@@ -212,7 +209,7 @@ export function normalizeBuiltinCommandGuards(
 		if (!canonical) {
 			return { ok: false, error: `Unknown builtin command in builtinCommandGuards: ${key}` };
 		}
-		if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || id.length === 0)) {
+		if (!Array.isArray(ids) || ids.some(id => typeof id !== "string" || id.length === 0)) {
 			return { ok: false, error: `builtinCommandGuards.${key} must be an array of nonempty guard ids` };
 		}
 		value[canonical] = ids;

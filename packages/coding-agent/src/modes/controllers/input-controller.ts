@@ -1327,7 +1327,6 @@ export class InputController {
 			});
 		}
 
-
 		if (this.#cancelCheckpointPreparation() || Date.now() < this.#prepCancelLatchUntil) {
 			return;
 		}

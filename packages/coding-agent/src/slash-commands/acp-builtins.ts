@@ -76,9 +76,11 @@ export async function executeAcpBuiltinSlashCommand(
 		) => Promise<
 			{ status: "executed"; value: SlashCommandResult; resumeText?: string } | { status: "blocked"; reason: string }
 		>;
-		admitBuiltinCommand?: (
-			request: { name: string; text: string; args: string },
-		) => { ok: true } | { ok: false; reason: string };
+		admitBuiltinCommand?: (request: {
+			name: string;
+			text: string;
+			args: string;
+		}) => { ok: true } | { ok: false; reason: string };
 	};
 
 	if (typeof session.runBuiltinCommand !== "function") {
