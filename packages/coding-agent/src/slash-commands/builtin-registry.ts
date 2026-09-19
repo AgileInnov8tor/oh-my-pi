@@ -216,7 +216,7 @@ export function canonicalBuiltinCommandName(name: string): string | undefined {
 export function normalizeBuiltinCommandGuards(
 	mapping: unknown,
 ): { ok: true; value: Record<string, string[]> } | { ok: false; error: string } {
-	if (mapping === undefined || mapping === null) {
+	if (mapping === undefined || mapping === null || mapping === "") {
 		return { ok: true, value: {} };
 	}
 	if (typeof mapping !== "object" || Array.isArray(mapping)) {
