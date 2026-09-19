@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Api, Model, ModelSpec } from "@oh-my-pi/pi-ai";
@@ -13,7 +14,12 @@ import { executeBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-comm
 import type { TuiSlashCommandRuntime } from "@oh-my-pi/pi-coding-agent/slash-commands/types";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
-const FLEET_EXT = "/Users/rk/Projects/rk-fleet/share/omp/kontinuo-auto-checkpoint/index.ts";
+// Opt-in live integration: needs the fleet guard module on disk (KONTINUO_GUARD_MODULE).
+// Metadata-only leaf drift is covered in builtin-command-guards.test.ts for CI.
+const GUARD_MODULE = process.env.KONTINUO_GUARD_MODULE ?? "";
+const KONTINUO_BIN = process.env.KONTINUO_BIN ?? "kontinuo";
+const KONTINUO_HOME = process.env.HOME ?? "/tmp";
+const e2eEnabled = process.env.KONTINUO_E2E === "1" && GUARD_MODULE !== "" && existsSync(GUARD_MODULE);
 const CHECKPOINT_ID =
 	"sha256:jcs:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RESUME = `Kontinuo resume: ${CHECKPOINT_ID}`;
@@ -52,13 +58,14 @@ function buildLocalModel(api: string): Model<Api> {
 async function writeExtension(dir: string, statsPath: string): Promise<string> {
 	const extPath = path.join(dir, "kontinuo-e2e-extension.ts");
 	const source = `
-import { handleKontinuoGuard } from ${JSON.stringify(FLEET_EXT)};
+import { handleKontinuoGuard } from ${JSON.stringify(GUARD_MODULE)};
 import { appendFileSync, writeFileSync } from "node:fs";
 
-const BIN = "/Users/rk/.local/bin/kontinuo";
+const BIN = ${JSON.stringify(KONTINUO_BIN)};
 const STORE = "/tmp/kontinuo-e2e-store";
 const CHECKPOINT_ID = ${JSON.stringify(CHECKPOINT_ID)};
 const statsPath = ${JSON.stringify(statsPath)};
+const HOME = ${JSON.stringify(KONTINUO_HOME)};
 
 function record(event: string, extra: Record<string, unknown> = {}) {
   appendFileSync(statsPath, JSON.stringify({ event, ...extra }) + "\\n");
@@ -68,8 +75,8 @@ function makeMcp() {
   let stored: Record<string, unknown> | undefined;
   let writes = 0;
   return {
-    env: { KONTINUO_BIN: BIN, KONTINUO_STORE: STORE, HOME: "/Users/rk" },
-    homedir: () => "/Users/rk",
+    env: { KONTINUO_BIN: BIN, KONTINUO_STORE: STORE, HOME },
+    homedir: () => HOME,
     now: () => Date.now(),
     loadAllMCPConfigs: async () => ({
       configs: {
@@ -234,7 +241,13 @@ function writeCount(statsPath: string): number {
 	}
 }
 
-describe("TUI dispatcher /clear Kontinuo policy", () => {
+describe("TUI dispatcher /clear Kontinuo policy availability", () => {
+	it("defaults to skip without KONTINUO_E2E=1 and KONTINUO_GUARD_MODULE", () => {
+		expect(e2eEnabled).toBe(process.env.KONTINUO_E2E === "1" && GUARD_MODULE !== "" && existsSync(GUARD_MODULE));
+	});
+});
+
+describe.skipIf(!e2eEnabled)("TUI dispatcher /clear Kontinuo policy", () => {
 	afterEach(() => {
 		delete process.env.OMP_KONTINUO_RESUME;
 	});
@@ -346,7 +359,6 @@ describe("TUI dispatcher /clear Kontinuo policy", () => {
 			authStorage.close();
 		}
 	});
-
 
 	it("clear succeeds when metadata-only leaf drift happens during guard preparation", async () => {
 		using tempDir = TempDir.createSync("@pi-kontinuo-clear-drift-e2e-");

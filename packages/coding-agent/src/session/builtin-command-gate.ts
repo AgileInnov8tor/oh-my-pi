@@ -61,7 +61,7 @@ type PrepSlot = {
 	identity: BuiltinCommandIdentity;
 	deadlineAt: number;
 	controller: AbortController;
-	timer: ReturnType<typeof setTimeout>;
+	timer: Timer;
 	event: BuiltinCommandGuardEvent;
 };
 
