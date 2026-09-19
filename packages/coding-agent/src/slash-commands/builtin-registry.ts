@@ -166,7 +166,7 @@ export async function executeBuiltinSlashCommand(
 			return true;
 		};
 		const requiredGuards = requiredGuardIdsFromSettings(
-			runtime.ctx.settings.get("builtinCommandGuards"),
+			runtime.ctx.settings?.get("builtinCommandGuards"),
 			command.name,
 		);
 		if (!requiredGuards.ok) {
