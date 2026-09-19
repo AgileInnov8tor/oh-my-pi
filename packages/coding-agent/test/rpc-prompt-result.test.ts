@@ -493,6 +493,8 @@ describe("watchAndReportLocalOnlyPromptResult", () => {
 });
 
 describe("RPC protected builtin command guards", () => {
+	const guardedCommands = { compact: ["test-guard"], handoff: ["test-guard"] };
+
 	test("RPC abort during generation cancels preparation and does not run the native command", async () => {
 		const output: string[] = [];
 		const { promise: hang, resolve } = Promise.withResolvers<void>();
@@ -523,6 +525,9 @@ describe("RPC protected builtin command guards", () => {
 		const runtime = {
 			session,
 			cwd: "/tmp",
+			settings: {
+				get: (key: string) => (key === "builtinCommandGuards" ? guardedCommands : undefined),
+			},
 			output: async (text: string) => {
 				output.push(text);
 			},
@@ -569,6 +574,9 @@ describe("RPC protected builtin command guards", () => {
 		const runtime = {
 			session,
 			cwd: "/tmp",
+			settings: {
+				get: (key: string) => (key === "builtinCommandGuards" ? guardedCommands : undefined),
+			},
 			output: async (text: string) => {
 				output.push(text);
 			},

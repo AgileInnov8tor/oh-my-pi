@@ -1534,8 +1534,11 @@ describe("/move preflight flush", () => {
 });
 
 describe("ACP builtin command guards", () => {
+	const guardedCommands = { compact: ["test-guard"], handoff: ["test-guard"] };
+
 	it("does not run the native handler when the guard blocks", async () => {
 		const { output, runtime } = createRuntime();
+		runtime.settings.set("builtinCommandGuards", guardedCommands);
 		let executed = 0;
 		Object.assign(runtime.session, {
 			runBuiltinCommand: async (
@@ -1555,6 +1558,7 @@ describe("ACP builtin command guards", () => {
 
 	it("admits RPC commands synchronously and does not schedule a duplicate", async () => {
 		const { output, runtime } = createRuntime();
+		runtime.settings.set("builtinCommandGuards", guardedCommands);
 		let admitted = 0;
 		const scheduled: Array<() => Promise<void>> = [];
 		Object.assign(runtime.session, {
@@ -1584,6 +1588,7 @@ describe("ACP builtin command guards", () => {
 
 	it("does not schedule when admitBuiltinCommand is missing", async () => {
 		const { output, runtime } = createRuntime();
+		runtime.settings.set("builtinCommandGuards", guardedCommands);
 		const scheduled: Array<() => Promise<void>> = [];
 		Object.assign(runtime.session, {
 			runBuiltinCommand: async () => ({ status: "executed" as const, value: undefined }),
