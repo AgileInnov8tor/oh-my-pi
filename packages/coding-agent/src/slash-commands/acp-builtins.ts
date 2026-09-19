@@ -84,7 +84,10 @@ export async function executeAcpBuiltinSlashCommand(
 		}) => { ok: true } | { ok: false; reason: string };
 	};
 
-	const requiredGuards = requiredGuardIdsFromSettings(runtime.settings.get("builtinCommandGuards"), command.name);
+	const requiredGuards = requiredGuardIdsFromSettings(
+		runtime.settings?.get("builtinCommandGuards"),
+		command.name,
+	);
 	if (!requiredGuards.ok) {
 		await runtime.output(requiredGuards.reason);
 		return { consumed: true };
