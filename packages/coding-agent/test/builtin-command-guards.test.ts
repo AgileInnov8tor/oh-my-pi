@@ -10,11 +10,7 @@ import {
 	type BuiltinCommandGateHost,
 	testSetBuiltinCommandPrepTimeoutMs,
 } from "@oh-my-pi/pi-coding-agent/session/builtin-command-gate";
-import {
-	applyGuardResumeHandoff,
-	consumeKontinuoResumeEnv,
-	KONTINUO_RESUME_ENV,
-} from "@oh-my-pi/pi-coding-agent/session/kontinuo-resume";
+import { applyGuardResumeHandoff } from "@oh-my-pi/pi-coding-agent/session/kontinuo-resume";
 import {
 	canonicalBuiltinCommandName,
 	normalizeBuiltinCommandGuards,
@@ -32,11 +28,12 @@ function createHost(options?: {
 	busy?: boolean;
 	guards?: Record<string, (event: BuiltinCommandGuardEvent, ctx: BuiltinCommandGuardContext) => Promise<unknown>>;
 	required?: Record<string, string[]>;
+	identity?: () => { cwd: string; sessionId: string; leafId: string | null };
 	now?: () => number;
 }): BuiltinCommandGateHost & { lastEvent?: BuiltinCommandGuardEvent; lastTimeoutMs?: number } {
 	const host: BuiltinCommandGateHost & { lastEvent?: BuiltinCommandGuardEvent; lastTimeoutMs?: number } = {
 		isBusy: () => options?.busy === true,
-		identity: () => ({ cwd: "/tmp/project", sessionId: "sess-1", leafId: "leaf-1" }),
+		identity: options?.identity ?? (() => ({ cwd: "/tmp/project", sessionId: "sess-1", leafId: "leaf-1" })),
 		requiredGuardIds: (canonicalName) => ({ ok: true, ids: options?.required?.[canonicalName] ?? [] }),
 		hasGuard: (id) => options?.guards?.[id] !== undefined,
 		invokeGuard: async (id, event, ctx, timeoutMs) => {
@@ -349,6 +346,49 @@ describe("BuiltinCommandGate", () => {
 		expect(executed).toBe(1);
 	}, 40_000);
 
+
+	it("blocks when the conversation leaf changes during preparation", async () => {
+		let leafId: string | null = "msg-1";
+		const host = createHost({
+			required: { clear: ["kontinuo"] },
+			identity: () => ({ cwd: "/tmp/project", sessionId: "sess-1", leafId }),
+			guards: {
+				kontinuo: async () => {
+					leafId = "msg-2";
+					return { allow: true };
+				},
+			},
+		});
+		const gate = new BuiltinCommandGate(host);
+		let executed = 0;
+		const result = await gate.run({ name: "clear", text: "/clear", args: "" }, async () => {
+			executed += 1;
+			return "ran";
+		});
+		expect(executed).toBe(0);
+		expect(result).toEqual({
+			status: "blocked",
+			reason: "Checkpoint blocked: session identity changed during preparation.",
+		});
+	});
+
+	it("allows preparation when only metadata leaf drift occurs and identity tracks conversation leaf", async () => {
+		const conversationLeaf = "msg-2";
+		const host = createHost({
+			required: { clear: ["kontinuo"] },
+			identity: () => ({ cwd: "/tmp/project", sessionId: "sess-1", leafId: conversationLeaf }),
+			guards: { kontinuo: async () => ({ allow: true }) },
+		});
+		const gate = new BuiltinCommandGate(host);
+		let executed = 0;
+		const result = await gate.run({ name: "clear", text: "/clear", args: "" }, async () => {
+			executed += 1;
+			return "ran";
+		});
+		expect(result).toEqual({ status: "executed", value: "ran" });
+		expect(executed).toBe(1);
+	});
+
 	it("admits synchronously so a duplicate RPC request cannot start a second job", () => {
 		const host = createHost({ required: { compact: ["kontinuo"] }, guards: { kontinuo: async () => ({ allow: true }) } });
 		const gate = new BuiltinCommandGate(host);
@@ -369,34 +409,59 @@ describe("isBuiltinCommandGuardResult", () => {
 });
 
 describe("applyGuardResumeHandoff", () => {
-	it("sets successor session text and stages restart env", () => {
+	it("installs clear resume text and clears absent text", () => {
 		const session: { stored?: string } = {};
-		const env: NodeJS.ProcessEnv = {};
 		applyGuardResumeHandoff({
-			commandName: "new",
+			commandName: "clear",
 			resumeText: "Kontinuo resume: id-1",
 			session: { setKontinuoResumeText: text => { session.stored = text; } },
 		});
 		expect(session.stored).toBe("Kontinuo resume: id-1");
 
 		applyGuardResumeHandoff({
-			commandName: "restart",
-			resumeText: "Kontinuo resume: id-2",
-			session: {},
-			env,
-		});
-		expect(env[KONTINUO_RESUME_ENV]).toBe("Kontinuo resume: id-2");
-		expect(consumeKontinuoResumeEnv(env)).toBe("Kontinuo resume: id-2");
-		expect(env[KONTINUO_RESUME_ENV]).toBeUndefined();
-	});
-
-	it("does not inject dump or compact", () => {
-		const session: { stored?: string } = { stored: "keep" };
-		applyGuardResumeHandoff({
-			commandName: "dump",
-			resumeText: "Kontinuo resume: id",
+			commandName: "clear",
+			resumeText: undefined,
 			session: { setKontinuoResumeText: text => { session.stored = text; } },
 		});
-		expect(session.stored).toBe("keep");
+		expect(session.stored).toBeUndefined();
+	});
+
+	it("clears stored text on delete and new", () => {
+		for (const commandName of ["delete", "new"] as const) {
+			const session: { stored?: string } = { stored: "stale" };
+			applyGuardResumeHandoff({
+				commandName,
+				resumeText: "Kontinuo resume: id",
+				session: { setKontinuoResumeText: text => { session.stored = text; } },
+			});
+			expect(session.stored).toBeUndefined();
+		}
+	});
+
+	it("ignores fresh, restart, dump, compact, and handoff", () => {
+		for (const commandName of ["fresh", "restart", "dump", "compact", "handoff"] as const) {
+			const session: { stored?: string } = { stored: "keep" };
+			applyGuardResumeHandoff({
+				commandName,
+				resumeText: "Kontinuo resume: id",
+				session: { setKontinuoResumeText: text => { session.stored = text; } },
+			});
+			expect(session.stored).toBe("keep");
+		}
+	});
+
+	it("does not stage legacy OMP_KONTINUO_RESUME", () => {
+		const env: NodeJS.ProcessEnv = {};
+		applyGuardResumeHandoff({
+			commandName: "restart",
+			resumeText: "Kontinuo resume: leaked",
+			session: {
+				setKontinuoResumeText: () => {
+					env.OMP_KONTINUO_RESUME = "should-not-write";
+				},
+			},
+		});
+		expect(env.OMP_KONTINUO_RESUME).toBeUndefined();
+		expect(process.env.OMP_KONTINUO_RESUME).toBeUndefined();
 	});
 });

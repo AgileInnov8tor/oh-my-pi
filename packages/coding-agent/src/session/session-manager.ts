@@ -39,7 +39,12 @@ import {
 	sanitizeRehydratedOpenAIResponsesAssistantMessage,
 	stripInternalDetailsFields,
 } from "./messages";
-import { type BuildSessionContextOptions, buildSessionContext, type SessionContext } from "./session-context";
+import {
+	 type BuildSessionContextOptions,
+	buildSessionContext,
+	isTranscriptEntry,
+	type SessionContext,
+} from "./session-context";
 import {
 	type BranchSummaryEntry,
 	type CompactionEntry,
@@ -583,6 +588,7 @@ export type ReadonlySessionManager = Pick<
 	| "saveArtifact"
 	| "getArtifactPath"
 	| "getLeafId"
+	| "getConversationLeafId"
 	| "getLeafEntry"
 	| "getEntry"
 	| "getLabel"
@@ -3008,6 +3014,16 @@ export class SessionManager {
 
 	getLeafId(): string | null {
 		return this.#index.leafId();
+	}
+
+	/** Last transcript entry (message or custom_message) on the active branch. */
+	getConversationLeafId(): string | null {
+		const branch = this.getBranch();
+		for (let index = branch.length - 1; index >= 0; index--) {
+			const entry = branch[index];
+			if (isTranscriptEntry(entry)) return entry.id;
+		}
+		return null;
 	}
 
 	getLeafEntry(): SessionEntry | undefined {

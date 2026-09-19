@@ -86,3 +86,76 @@ describe("AgentSession context-file reload on session reset", () => {
 		await expectContextReload(session => session.resetSessionContext());
 	});
 });
+
+const RESUME_MARKER = "Kontinuo resume: sha256:jcs:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+async function createReloadSession(tempDir: TempDir): Promise<{ session: AgentSession; authStorage: AuthStorage }> {
+	const api = `context-reload-${Bun.nanoseconds().toString(36)}`;
+	const authStorage = await AuthStorage.create(tempDir.join("auth.db"));
+	authStorage.setRuntimeApiKey("managed-primary", "test-key");
+	const modelRegistry = new ModelRegistry(authStorage, tempDir.join("models.yml"));
+	const { session } = await createAgentSession({
+		cwd: tempDir.path(),
+		agentDir: tempDir.path(),
+		sessionManager: SessionManager.inMemory(tempDir.path()),
+		authStorage,
+		modelRegistry,
+		settings: Settings.isolated({ "compaction.enabled": false }),
+		model: buildLocalModel(api),
+		disableExtensionDiscovery: true,
+		skills: [],
+		promptTemplates: [],
+		slashCommands: [],
+		enableMCP: false,
+		enableLsp: false,
+		skipPythonPreflight: true,
+	});
+	return { session, authStorage };
+}
+
+describe("AgentSession Kontinuo resume text on session reset", () => {
+	afterEach(() => {
+		delete process.env.OMP_KONTINUO_RESUME;
+		vi.restoreAllMocks();
+	});
+
+	it("delivers stored resume text in the rebuilt prompt after resetSessionContext()", async () => {
+		using tempDir = TempDir.createSync("@pi-kontinuo-clear-resume-");
+		const { session, authStorage } = await createReloadSession(tempDir);
+		try {
+			session.setKontinuoResumeText(RESUME_MARKER);
+			expect(await session.resetSessionContext()).toBeTruthy();
+			expect(session.systemPrompt.join("\n")).toContain(RESUME_MARKER);
+		} finally {
+			await session.dispose();
+			authStorage.close();
+		}
+	});
+
+	it("drops stored resume text from the successor prompt after newSession()", async () => {
+		using tempDir = TempDir.createSync("@pi-kontinuo-new-resume-");
+		const { session, authStorage } = await createReloadSession(tempDir);
+		try {
+			session.setKontinuoResumeText(RESUME_MARKER);
+			expect(await session.newSession()).toBe(true);
+			expect(session.systemPrompt.join("\n")).not.toContain(RESUME_MARKER);
+			expect(session.getKontinuoResumeText()).toBeUndefined();
+		} finally {
+			await session.dispose();
+			authStorage.close();
+		}
+	});
+
+	it("ignores a pre-set legacy OMP_KONTINUO_RESUME at session start", async () => {
+		process.env.OMP_KONTINUO_RESUME = RESUME_MARKER;
+		using tempDir = TempDir.createSync("@pi-kontinuo-legacy-env-");
+		const { session, authStorage } = await createReloadSession(tempDir);
+		try {
+			expect(session.systemPrompt.join("\n")).not.toContain(RESUME_MARKER);
+			expect(session.getKontinuoResumeText()).toBeUndefined();
+		} finally {
+			await session.dispose();
+			authStorage.close();
+		}
+	});
+});

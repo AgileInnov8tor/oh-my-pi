@@ -91,4 +91,48 @@ describe("SessionManager branch ordering", () => {
 		manager.appendModelChange("anthropic/claude-haiku-4-5", "smol");
 		expect(manager.getLastModelChangeRole()).toBe("smol");
 	});
+	it("getConversationLeafId() ignores metadata-only leaf drift", async () => {
+		const manager = SessionManager.inMemory();
+		const userId = manager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "hello" }],
+			timestamp: Date.now(),
+		} as never);
+		const assistantId = manager.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "hi" }],
+			timestamp: Date.now(),
+			stopReason: "end_turn",
+		} as never);
+		expect(manager.getConversationLeafId()).toBe(assistantId);
+		expect(manager.getLeafId()).toBe(assistantId);
+
+		await manager.setSessionName("Generated title", "auto");
+		expect(manager.getConversationLeafId()).toBe(assistantId);
+		expect(manager.getLeafId()).not.toBe(assistantId);
+
+		manager.appendModelUsage(
+			{
+				purpose: "auto-thinking",
+				role: "default",
+				api: "openai-responses",
+				provider: "managed-primary",
+				model: "test-model",
+				stopReason: "stop",
+				usage: {
+					input: 1,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 1,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+			},
+			{ sessionId: manager.getSessionId(), parentId: manager.getConversationLeafId() },
+		);
+		expect(manager.getConversationLeafId()).toBe(assistantId);
+		expect(manager.getLeafId()).not.toBe(assistantId);
+		expect(userId).not.toBe(assistantId);
+	});
+
 });

@@ -2550,7 +2550,7 @@ export class AgentSession {
 			identity: () => ({
 				cwd: this.sessionManager.getCwd(),
 				sessionId: this.sessionManager.getSessionId(),
-				leafId: this.sessionManager.getLeafId(),
+				leafId: this.sessionManager.getConversationLeafId(),
 			}),
 			requiredGuardIds: (canonicalName) =>
 				requiredGuardIdsFromSettings(this.settings.get("builtinCommandGuards"), canonicalName),
@@ -8501,6 +8501,7 @@ export class AgentSession {
 			// The workspace-roots block must also reflect the new session's
 			// directory set, not the previous session's — refresh before the next
 			// turn goes out.
+			this.#kontinuoResumeText = undefined;
 			resetCapabilities();
 			await this.refreshBaseSystemPrompt();
 
