@@ -5,6 +5,7 @@
 ### Breaking Changes
 
 - `LimitsApi.rotate()` now returns a `CredentialRotation` object (`{ switched, afterSiblingWait? }`) instead of a boolean; check `.switched`, since the object is always truthy ([#13270](https://github.com/can1357/oh-my-pi/issues/13270))
+
 ### Added
 
 - Added `ImageGenerationResult.model` and `GeneratedImage.size`/`quality`, populated from the image model, dimensions, and quality the hosted OpenAI backends report ([#13403](https://github.com/can1357/oh-my-pi/issues/13403))
@@ -27,9 +28,11 @@
 - Fixed Cursor shell tool calls showing their millisecond timeout as seconds (15000 instead of 15) in the transcript ([#13082](https://github.com/can1357/oh-my-pi/issues/13082))
 - Fixed unix-socket fetches failing when `PI_PROXY` is set ([#13505](https://github.com/can1357/oh-my-pi/issues/13505)).
 - Fixed Ollama chat turns recording zero cost; usage is now priced from the model's cost card ([#13056](https://github.com/can1357/oh-my-pi/issues/13056)).
+
 ### Fixed
 
 - Fixed Anthropic requests failing with "`compaction` block must be sent first" when a per-message effort change was recorded on the turn right after a native compaction; the effort control now follows the compaction block ([#13569](https://github.com/can1357/oh-my-pi/pull/13569) by [@H4vC](https://github.com/H4vC))
+- Fixed Codex WebSocket turns dying with `unsupported_native_inflight_message` when the native turn lane was still busy; the turn is now retried as an independent full-context request instead of surfacing the error.
 
 ## [18.3.5] - 2026-09-27
 
